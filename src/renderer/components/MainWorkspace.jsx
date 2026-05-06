@@ -364,6 +364,23 @@ function JsonCreationView({
     }
   };
 
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState(null);
+
+  const handleRemoveDate = async () => {
+    if (!selectedImage) return;
+    setRemoving(true);
+    setRemoveError(null);
+    const result = await window.electron.removeDate(selectedImage.path);
+    setRemoving(false);
+    if (result.success) {
+      onUpdateDate(selectedImage.name, null);
+      setEditingDate('');
+    } else {
+      setRemoveError(result.error || 'Failed to remove EXIF data');
+    }
+  };
+
   const missingCount = missingDateQueue.length;
   const totalCount = allHistoricalImages.length;
   const resolvedCount = totalCount - missingCount;
@@ -495,6 +512,21 @@ function JsonCreationView({
                   >
                     ✓ {historicalDates[selectedImage.name] ? 'Update Date' : 'Set Date'}
                   </button>
+                  {historicalDates[selectedImage.name] && (
+                    <button
+                      className="btn btn-remove-date"
+                      style={{ marginTop: 6, width: '100%' }}
+                      onClick={handleRemoveDate}
+                      disabled={removing}
+                    >
+                      {removing ? '...' : '✕ Remove EXIF Date'}
+                    </button>
+                  )}
+                  {removeError && (
+                    <p style={{ fontSize: 10, color: 'var(--accent-red)', marginTop: 4 }}>
+                      {removeError}
+                    </p>
+                  )}
                 </div>
               </>
             ) : (
@@ -533,4 +565,4 @@ function CompleteView({ outputPath }) {
       </div>
     </div>
   );
-}
+} 

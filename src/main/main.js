@@ -241,7 +241,44 @@ ipcMain.handle('exif:extractHistoricalDates', async (_, historicalFolderPath) =>
   return { dates, missingQueue };
 });
 
-// Read image as base64 for display in renderer
+// Strip EXIF date metadata from an image file permanently
+ipcMain.handle('exif:removeDate', async (_, filePath) => {
+  return new Promise((resolve) => {
+    const exifBin = getExifToolPath();
+    const safeFile = filePath.replace(/"/g, '\\"');
+    // Wipe every date-related tag ExifTool knows about, plus XMP/IPTC equivalents
+    // -overwrite_original prevents a _original backup being created
+    const cmd = [
+      `"${exifBin}"`,
+      '-DateTimeOriginal=',
+      '-CreateDate=',
+      '-ModifyDate=',
+      '-FileModifyDate=',
+      '-FileCreateDate=',
+      '-MetadataDate=',
+      '-DateTime=',
+      '-Date=',
+      '-XMP:DateTimeOriginal=',
+      '-XMP:CreateDate=',
+      '-XMP:ModifyDate=',
+      '-XMP:MetadataDate=',
+      '-IPTC:DateCreated=',
+      '-IPTC:TimeCreated=',
+      '-IPTC:DigitalCreationDate=',
+      '-IPTC:DigitalCreationTime=',
+      '-overwrite_original_in_place',
+      `"${safeFile}"`
+    ].join(' ');
+
+    exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
+      if (err) {
+        resolve({ success: false, error: stderr || err.message });
+      } else {
+        resolve({ success: true });
+      }
+    });
+  });
+});
 ipcMain.handle('fs:readImageAsBase64', async (_, filePath) => {
   try {
     const data = fs.readFileSync(filePath);

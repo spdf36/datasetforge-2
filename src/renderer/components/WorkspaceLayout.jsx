@@ -81,9 +81,22 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
 
   // ── Inline date update from grid ─────────────────────────────
   const handleUpdateDate = useCallback((filename, dateValue) => {
-    setHistoricalDates(prev => ({ ...prev, [filename]: `${dateValue}T00:00:00` }));
-    setMissingDateQueue(prev => prev.filter(item => item.name !== filename));
-  }, []);
+    if (dateValue === null) {
+      // Remove the date — add back to missing queue
+      setHistoricalDates(prev => {
+        const next = { ...prev };
+        delete next[filename];
+        return next;
+      });
+      setMissingDateQueue(prev => {
+        if (prev.some(item => item.name === filename)) return prev;
+        return [...prev, { name: filename, path: `${selectedBatchPath}/Historical/${filename}` }];
+      });
+    } else {
+      setHistoricalDates(prev => ({ ...prev, [filename]: `${dateValue}T00:00:00` }));
+      setMissingDateQueue(prev => prev.filter(item => item.name !== filename));
+    }
+  }, [selectedBatchPath]);
 
   // ── Save ─────────────────────────────────────────────────────
   const handleSaveDirectly = useCallback(async () => {

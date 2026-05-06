@@ -17,4 +17,5 @@ contextBridge.exposeInMainWorld('electron', {
 
   // ExifTool
   extractHistoricalDates: (folderPath) => ipcRenderer.invoke('exif:extractHistoricalDates', folderPath),
+  removeDate: (filePath) => ipcRenderer.invoke('exif:removeDate', filePath),
 });
