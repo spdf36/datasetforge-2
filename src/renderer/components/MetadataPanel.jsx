@@ -2,7 +2,18 @@
 import React from 'react';
 import './MetadataPanel.css';
 
+const COUNTRY_OPTIONS = [
+  { code: 'IN', label: 'IN' },
+  { code: 'NG', label: 'NG' },
+];
+
+const DEVICE_OS_OPTIONS = [
+  'android',
+  'ios',
+];
 const ETHNICITY_OPTIONS = [
+  'south_asian',
+  'north_african',
   'Asian – East Asian',
   'Asian – South Asian',
   'Asian – Southeast Asian',
@@ -36,22 +47,18 @@ export default function MetadataPanel({ metadata, onChange, disabled }) {
       <div className="metadata-scroll">
 
         <FieldGroup label="LOCATION" icon="◈">
-          <Field
-            id="country"
-            label="Country"
-            hint="ISO 3166-1 alpha-2"
-            placeholder="e.g. DE, US, IN"
-          >
-            <input
+          <Field id="country" label="Country">
+            <select
               id="country"
-              type="text"
               value={metadata.country}
               onChange={set('country')}
-              placeholder="DE"
-              maxLength={2}
               disabled={disabled}
-              style={{ textTransform: 'uppercase', letterSpacing: '0.1em' }}
-            />
+            >
+              <option value="">— select —</option>
+              {COUNTRY_OPTIONS.map(c => (
+                <option key={c.code} value={c.code}>{c.label}</option>
+              ))}
+            </select>
           </Field>
         </FieldGroup>
 
@@ -96,15 +103,18 @@ export default function MetadataPanel({ metadata, onChange, disabled }) {
         </FieldGroup>
 
         <FieldGroup label="DEVICE" icon="⬡">
-          <Field id="device_os" label="Device OS" hint="e.g. Android 13, iOS 16">
-            <input
+          <Field id="device_os" label="Device OS">
+            <select
               id="device_os"
-              type="text"
               value={metadata.device_os}
               onChange={set('device_os')}
-              placeholder="Android 13"
               disabled={disabled}
-            />
+            >
+              <option value="">— select —</option>
+              {DEVICE_OS_OPTIONS.map(os => (
+                <option key={os} value={os}>{os}</option>
+              ))}
+            </select>
           </Field>
         </FieldGroup>
 
