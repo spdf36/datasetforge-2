@@ -1,0 +1,67 @@
+{
+  "name": "datasetforge",
+  "version": "1.0.0",
+  "description": "Local desktop app for image dataset metadata management",
+  "author": "DatasetForge",
+  "main": "src/main/main.js",
+  "homepage": "./",
+  "scripts": {
+    "start": "concurrently \"npm run react-start\" \"wait-on http://localhost:3000 && npm run electron-start\"",
+    "react-start": "cross-env BROWSER=none react-scripts start",
+    "electron-start": "cross-env NODE_ENV=development electron .",
+    "build": "npm run react-build && electron-builder --win",
+    "react-build": "cross-env GENERATE_SOURCEMAP=false react-scripts build"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "cross-env": "^7.0.3",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.datasetforge.app",
+    "productName": "DatasetForge",
+    "copyright": "Copyright 2024",
+    "extends": null,
+    "extraMetadata": {
+      "main": "src/main/main.js"
+    },
+    "files": [
+      "build/**/*",
+      "src/main/main.js",
+      "src/main/preload.js"
+    ],
+    "extraResources": [
+      {
+        "from": "public/exiftool",
+        "to": "exiftool",
+        "filter": ["**/*"]
+      }
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DatasetForge"
+    }
+  },
+  "browserslist": {
+    "production": [">0.2%", "not dead", "not op_mini all"],
+    "development": ["last 1 chrome version"]
+  }
+}
