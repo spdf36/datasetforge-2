@@ -223,7 +223,6 @@ ipcMain.handle('exif:extractHistoricalDates', async (_, historicalFolderPath) =>
   const entries = fs.readdirSync(historicalFolderPath, { withFileTypes: true });
   const images = entries
     .filter(e => e.isFile() && isImage(e.name))
-    .slice(0, 16)
     .map(e => ({ name: e.name, path: path.join(historicalFolderPath, e.name) }));
 
   const dates = {};
