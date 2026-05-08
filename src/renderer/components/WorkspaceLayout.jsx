@@ -104,14 +104,17 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
   }, [historicalDates, metadata]);
 
   const saveMetadata = async (dates) => {
+    const sortedDates = Object.keys(dates)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+      .reduce((acc, key) => { acc[key] = dates[key]; return acc; }, {});
+
     const finalMetadata = {
       ...metadata,
-      historic_capture_dates: dates,
+      historic_capture_dates: sortedDates,
     };
-    const folderName = selectedBatchPath.split(/[\\/]/).filter(Boolean).pop();
     const result = await window.electron.saveMetadata({
       batchFolderPath: selectedBatchPath,
-      filename: `${folderName}.json`,
+      filename: 'metadata.json',
       metadata: finalMetadata,
     });
     if (result.success) {
