@@ -22,7 +22,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: false, // allow local file:// image loads via base64 IPC
+      webSecurity: false,
     },
   });
 
@@ -45,18 +45,14 @@ function isImage(filename) {
   return IMAGE_EXTENSIONS.has(path.extname(filename).toLowerCase());
 }
 
-/** Recursively scan a directory and build a tree node */
 function scanDirectory(dirPath, rootPath) {
   const name = path.basename(dirPath);
   const relativePath = path.relative(rootPath, dirPath);
   const node = { name, path: dirPath, relativePath: relativePath || '.', type: 'folder', children: [] };
 
   let entries;
-  try {
-    entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  } catch {
-    return node;
-  }
+  try { entries = fs.readdirSync(dirPath, { withFileTypes: true }); }
+  catch { return node; }
 
   for (const entry of entries) {
     const fullPath = path.join(dirPath, entry.name);
@@ -64,26 +60,21 @@ function scanDirectory(dirPath, rootPath) {
       node.children.push(scanDirectory(fullPath, rootPath));
     } else if (entry.isFile()) {
       node.children.push({
-        name: entry.name,
-        path: fullPath,
+        name: entry.name, path: fullPath,
         relativePath: path.relative(rootPath, fullPath),
-        type: 'file',
-        ext: path.extname(entry.name).toLowerCase(),
+        type: 'file', ext: path.extname(entry.name).toLowerCase(),
         isImage: isImage(entry.name),
       });
     }
   }
 
-  // Sort: folders first, then files
   node.children.sort((a, b) => {
     if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
     return a.name.localeCompare(b.name);
   });
-
   return node;
 }
 
-/** Flatten tree to collect all image paths */
 function collectImages(node, results = []) {
   if (node.type === 'file' && node.isImage) { results.push(node); return results; }
   if (node.children) node.children.forEach(c => collectImages(c, results));
@@ -93,64 +84,83 @@ function collectImages(node, results = []) {
 // ─── ExifTool Resolver ─────────────────────────────────────────────────────
 function getExifToolPath() {
   const bin = process.platform === 'win32' ? 'exiftool.exe' : 'exiftool';
-
-  // 1. Packaged app — electron-builder puts extraResources at process.resourcesPath
   if (app.isPackaged) {
     const bundled = path.join(process.resourcesPath, 'exiftool', bin);
     if (fs.existsSync(bundled)) return bundled;
   }
-
-  // 2. Dev — next to public/ folder
   const dev = path.join(app.getAppPath(), 'public', 'exiftool', bin);
   if (fs.existsSync(dev)) return dev;
-
-  // 3. System PATH fallback
   return bin;
 }
 
-/** Run exiftool on a single file and extract date fields */
 function extractDateWithExiftool(filePath) {
   return new Promise((resolve) => {
     const exifBin = getExifToolPath();
-    // On Windows paths can contain spaces — double-quote everything
     const safeFile = filePath.replace(/"/g, '\\"');
-    const cmd = process.platform === 'win32'
-      ? `"${exifBin}" -DateTimeOriginal -CreateDate -json "${safeFile}"`
-      : `"${exifBin}" -DateTimeOriginal -CreateDate -json "${safeFile}"`;
-
+    const cmd = `"${exifBin}" -DateTimeOriginal -CreateDate -json "${safeFile}"`;
     exec(cmd, { timeout: 15000 }, (err, stdout) => {
       if (err || !stdout) { resolve(null); return; }
       try {
         const data = JSON.parse(stdout);
         const raw = data[0]?.DateTimeOriginal || data[0]?.CreateDate;
         if (!raw) { resolve(null); return; }
-
-        // ExifTool format: "2023:07:14 15:30:00" → "2023-07-14T00:00:00"
         const match = raw.match(/^(\d{4}):(\d{2}):(\d{2})/);
-        if (match) {
-          resolve(`${match[1]}-${match[2]}-${match[3]}T00:00:00`);
-        } else {
-          resolve(null);
-        }
-      } catch {
-        resolve(null);
-      }
+        if (match) resolve(`${match[1]}-${match[2]}-${match[3]}T00:00:00`);
+        else resolve(null);
+      } catch { resolve(null); }
     });
   });
 }
 
 // ─── IPC Handlers ──────────────────────────────────────────────────────────
 
-// Open folder via system dialog
 ipcMain.handle('dialog:openFolder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory'],
-    title: 'Select Dataset Root Folder',
+    properties: ['openDirectory', 'multiSelections'],
+    title: 'Select Dataset Folder(s)',
   });
-  return result.canceled ? null : result.filePaths[0];
+  if (result.canceled || !result.filePaths.length) return null;
+  // Return array — App handles single vs multi
+  return result.filePaths.length === 1 ? result.filePaths[0] : result.filePaths;
 });
 
-// Scan folder and return tree
+ipcMain.handle('dialog:openFile', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    title: 'Select any image file in the dataset folder',
+    filters: [{ name: 'Images', extensions: ['jpg','jpeg','png','tiff','tif','bmp','webp','heic','heif','raw','cr2','nef','arw'] }],
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  // Return the parent directory so the app loads the whole folder
+  return path.dirname(result.filePaths[0]);
+});
+
+ipcMain.handle('fs:scanMultipleFolders', async (_, folderPaths) => {
+  if (!folderPaths?.length) return { error: 'No paths provided' };
+
+  // Use the common parent as the virtual root label
+  const firstParent = path.dirname(folderPaths[0]);
+  const virtualRoot = {
+    name: path.basename(firstParent),
+    path: firstParent,
+    relativePath: '.',
+    type: 'folder',
+    children: [],
+  };
+
+  const allImages = [];
+  for (const folderPath of folderPaths) {
+    if (!fs.existsSync(folderPath)) continue;
+    const node = scanDirectory(folderPath, firstParent);
+    virtualRoot.children.push(node);
+    collectImages(node, allImages);
+  }
+
+  virtualRoot.children.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+  return { tree: virtualRoot, allImages, rootPath: firstParent };
+});
+
 ipcMain.handle('fs:scanFolder', async (_, folderPath) => {
   if (!fs.existsSync(folderPath)) return { error: 'Path does not exist' };
   const tree = scanDirectory(folderPath, folderPath);
@@ -158,46 +168,31 @@ ipcMain.handle('fs:scanFolder', async (_, folderPath) => {
   return { tree, allImages, rootPath: folderPath };
 });
 
-// Validate batch folder structure
 ipcMain.handle('fs:validateBatchFolder', async (_, folderPath) => {
   let entries;
-  try {
-    entries = fs.readdirSync(folderPath, { withFileTypes: true });
-  } catch {
-    return { valid: false, error: 'Cannot read folder' };
-  }
+  try { entries = fs.readdirSync(folderPath, { withFileTypes: true }); }
+  catch { return { valid: false, error: 'Cannot read folder' }; }
 
   const subfolderNames = entries.filter(e => e.isDirectory()).map(e => e.name);
   const required = ['Historical', 'Present_Neutral'];
   const poseVariants = ['Pose_Variation_A', 'Pose_Variation_B'];
-
   const missing = [];
   required.forEach(r => { if (!subfolderNames.includes(r)) missing.push(r); });
-
   const hasPose = poseVariants.some(p => subfolderNames.includes(p));
   if (!hasPose) missing.push('Pose_Variation_A or Pose_Variation_B');
-
   return {
-    valid: missing.length === 0,
-    found: subfolderNames,
-    missing,
+    valid: missing.length === 0, found: subfolderNames, missing,
     poseVariantFound: poseVariants.find(p => subfolderNames.includes(p)) || null,
   };
 });
 
-// Rename a folder on disk
 ipcMain.handle('fs:renameFolder', async (_, { oldPath, newName }) => {
   const parentDir = path.dirname(oldPath);
   const newPath = path.join(parentDir, newName);
-  try {
-    fs.renameSync(oldPath, newPath);
-    return { success: true, newPath };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
+  try { fs.renameSync(oldPath, newPath); return { success: true, newPath }; }
+  catch (err) { return { success: false, error: err.message }; }
 });
 
-// Get images in a specific subfolder (for Present_Neutral preview, Historical scan)
 ipcMain.handle('fs:getImagesInFolder', async (_, folderPath) => {
   if (!fs.existsSync(folderPath)) return [];
   const entries = fs.readdirSync(folderPath, { withFileTypes: true });
@@ -206,7 +201,6 @@ ipcMain.handle('fs:getImagesInFolder', async (_, folderPath) => {
     .map(e => ({ name: e.name, path: path.join(folderPath, e.name) }));
 });
 
-// Get a random image from Present_Neutral for reference display
 ipcMain.handle('fs:getRandomImage', async (_, folderPath) => {
   if (!fs.existsSync(folderPath)) return null;
   const entries = fs.readdirSync(folderPath, { withFileTypes: true });
@@ -216,10 +210,8 @@ ipcMain.handle('fs:getRandomImage', async (_, folderPath) => {
   return path.join(folderPath, picked.name);
 });
 
-// Extract dates from Historical folder (up to 16 images)
 ipcMain.handle('exif:extractHistoricalDates', async (_, historicalFolderPath) => {
   if (!fs.existsSync(historicalFolderPath)) return { dates: {}, missingQueue: [] };
-
   const entries = fs.readdirSync(historicalFolderPath, { withFileTypes: true });
   const images = entries
     .filter(e => e.isFile() && isImage(e.name))
@@ -228,79 +220,279 @@ ipcMain.handle('exif:extractHistoricalDates', async (_, historicalFolderPath) =>
   const dates = {};
   const missingQueue = [];
 
-  for (const img of images) {
-    const date = await extractDateWithExiftool(img.path);
-    if (date) {
-      dates[img.name] = date;
-    } else {
-      missingQueue.push({ name: img.name, path: img.path });
-    }
-  }
+  if (images.length === 0) return { dates, missingQueue };
+
+  // Run ONE ExifTool call on all files at once — massively faster than N calls
+  await new Promise((resolve) => {
+    const exifBin = getExifToolPath();
+    const filePaths = images.map(img => `"${img.path.replace(/"/g, '\\"')}"`).join(' ');
+    const cmd = `"${exifBin}" -DateTimeOriginal -CreateDate -FileName -json ${filePaths}`;
+    exec(cmd, { timeout: 60000, maxBuffer: 50 * 1024 * 1024 }, (err, stdout) => {
+      if (err || !stdout) { resolve(); return; }
+      try {
+        const results = JSON.parse(stdout);
+        const resultMap = {};
+        for (const r of results) {
+          const fname = r.FileName || '';
+          resultMap[fname] = r.DateTimeOriginal || r.CreateDate || null;
+        }
+        for (const img of images) {
+          const raw = resultMap[img.name];
+          if (raw) {
+            const match = raw.match(/^(\d{4}):(\d{2}):(\d{2})/);
+            if (match) dates[img.name] = `${match[1]}-${match[2]}-${match[3]}T00:00:00`;
+            else missingQueue.push({ name: img.name, path: img.path });
+          } else {
+            missingQueue.push({ name: img.name, path: img.path });
+          }
+        }
+      } catch { images.forEach(img => missingQueue.push({ name: img.name, path: img.path })); }
+      resolve();
+    });
+  });
 
   return { dates, missingQueue };
 });
 
-// Strip EXIF date metadata from an image file permanently
+// Strip all date EXIF from image permanently
 ipcMain.handle('exif:removeDate', async (_, filePath) => {
   return new Promise((resolve) => {
     const exifBin = getExifToolPath();
     const safeFile = filePath.replace(/"/g, '\\"');
-    // Wipe every date-related tag ExifTool knows about, plus XMP/IPTC equivalents
-    // -overwrite_original prevents a _original backup being created
     const cmd = [
       `"${exifBin}"`,
-      '-DateTimeOriginal=',
-      '-CreateDate=',
-      '-ModifyDate=',
-      '-FileModifyDate=',
-      '-FileCreateDate=',
-      '-MetadataDate=',
-      '-DateTime=',
-      '-Date=',
-      '-XMP:DateTimeOriginal=',
-      '-XMP:CreateDate=',
-      '-XMP:ModifyDate=',
-      '-XMP:MetadataDate=',
-      '-IPTC:DateCreated=',
-      '-IPTC:TimeCreated=',
-      '-IPTC:DigitalCreationDate=',
-      '-IPTC:DigitalCreationTime=',
-      '-overwrite_original_in_place',
+      '-DateTimeOriginal=', '-CreateDate=', '-ModifyDate=',
+      '-FileModifyDate=', '-FileCreateDate=', '-MetadataDate=',
+      '-DateTime=', '-Date=',
+      '-XMP:DateTimeOriginal=', '-XMP:CreateDate=', '-XMP:ModifyDate=', '-XMP:MetadataDate=',
+      '-IPTC:DateCreated=', '-IPTC:TimeCreated=', '-IPTC:DigitalCreationDate=', '-IPTC:DigitalCreationTime=',
+      '-overwrite_original_in_place', '-m',
       `"${safeFile}"`
     ].join(' ');
-
     exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
-      if (err) {
-        resolve({ success: false, error: stderr || err.message });
-      } else {
-        resolve({ success: true });
-      }
+      if (err) resolve({ success: false, error: stderr || err.message });
+      else resolve({ success: true });
     });
   });
 });
-ipcMain.handle('fs:readImageAsBase64', async (_, filePath) => {
-  try {
-    const data = fs.readFileSync(filePath);
-    const ext = path.extname(filePath).toLowerCase().replace('.', '');
-    const mime = ext === 'jpg' ? 'jpeg' : ext;
-    return `data:image/${mime};base64,${data.toString('base64')}`;
-  } catch {
-    return null;
-  }
+
+// Read camera metadata fields from an existing image
+ipcMain.handle('exif:readCameraMetadata', async (_, filePath) => {
+  return new Promise((resolve) => {
+    const exifBin = getExifToolPath();
+    const safeFile = filePath.replace(/"/g, '\\"');
+    const cmd = `"${exifBin}" -Make -Model -FNumber -ExposureTime -ISO -ExposureCompensation -FocalLength -MeteringMode -Flash -json "${safeFile}"`;
+    exec(cmd, { timeout: 15000 }, (err, stdout) => {
+      if (err || !stdout) { resolve(null); return; }
+      try {
+        const data = JSON.parse(stdout)[0];
+        const fields = {
+          make:          data.Make          || '',
+          model:         data.Model         || '',
+          fNumber:       data.FNumber       ? String(data.FNumber)       : '',
+          exposureTime:  data.ExposureTime  ? String(data.ExposureTime)  : '',
+          iso:           data.ISO           ? String(data.ISO)           : '',
+          exposureBias:  data.ExposureCompensation !== undefined ? String(data.ExposureCompensation) : '',
+          focalLength:   data.FocalLength   ? String(data.FocalLength).replace(' mm', '') : '',
+          meteringMode:  data.MeteringMode  || '',
+          flash:         data.Flash         || '',
+        };
+        // Only return if at least one field has a value
+        const hasData = Object.values(fields).some(v => v !== '');
+        resolve(hasData ? fields : null);
+      } catch { resolve(null); }
+    });
+  });
 });
 
-// Save final metadata JSON
+// Write camera metadata fields into a single image
+ipcMain.handle('exif:writeCameraMetadata', async (_, { filePath, cameraFields }) => {
+  return new Promise((resolve) => {
+    const exifBin = getExifToolPath();
+    const safeFile = filePath.replace(/"/g, '\\"');
+
+    const tags = [];
+
+    // Make / Model — plain strings
+    if (cameraFields.make)  tags.push(`-Make="${cameraFields.make}"`);
+    if (cameraFields.model) tags.push(`-Model="${cameraFields.model}"`);
+
+    // FNumber — strip any leading "f/" and write numeric e.g. 1.8
+    if (cameraFields.fNumber) {
+      const fn = cameraFields.fNumber.toString().replace(/^f\//i, '');
+      tags.push(`-FNumber=${fn}`);
+      tags.push(`-ApertureValue=${fn}`);
+    }
+
+    // ExposureTime — accept "1/120" or "0.008" and write as rational e.g. 1/120
+    if (cameraFields.exposureTime) {
+      const et = cameraFields.exposureTime.toString().trim();
+      tags.push(`-ExposureTime=${et}`);
+      tags.push(`-ShutterSpeedValue=${et}`);
+    }
+
+    // ISO
+    if (cameraFields.iso) {
+      const iso = parseInt(cameraFields.iso, 10);
+      if (!isNaN(iso)) tags.push(`-ISO=${iso}`);
+    }
+
+    // ExposureBias / ExposureCompensation — numeric e.g. 0
+    if (cameraFields.exposureBias !== undefined && cameraFields.exposureBias !== '') {
+      tags.push(`-ExposureCompensation=${cameraFields.exposureBias}`);
+      tags.push(`-ExposureBiasValue=${cameraFields.exposureBias}`);
+    }
+
+    // FocalLength — strip "mm" suffix, write numeric e.g. 4.2
+    if (cameraFields.focalLength) {
+      const fl = cameraFields.focalLength.toString().replace(/\s*mm$/i, '').trim();
+      tags.push(`-FocalLength=${fl}`);
+    }
+
+    // MeteringMode — ExifTool accepts the string label directly
+    if (cameraFields.meteringMode) {
+      tags.push(`-MeteringMode="${cameraFields.meteringMode}"`);
+    }
+
+    // Flash — ExifTool accepts the string label directly
+    if (cameraFields.flash) {
+      tags.push(`-Flash="${cameraFields.flash}"`);
+    }
+
+    if (tags.length === 0) { resolve({ success: true }); return; }
+
+    const cmd = [`"${exifBin}"`, ...tags, '-overwrite_original_in_place', '-m', `"${safeFile}"`].join(' ');
+    exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
+      if (err) resolve({ success: false, error: stderr || err.message });
+      else resolve({ success: true });
+    });
+  });
+});
+
+// Write metadata fields into ALL images in Historical, Present_Neutral, and Pose_Variation folders
+ipcMain.handle('exif:writeImageMetadata', async (_, { batchFolderPath, metadata, historicalDates }) => {
+  const exifBin = getExifToolPath();
+  const results = { success: [], failed: [] };
+
+  // Collect all images across the three subfolders
+  const subfolders = ['Historical', 'Present_Neutral'];
+  const poseVariants = ['Pose_Variation_A', 'Pose_Variation_B'];
+  for (const pv of poseVariants) {
+    const pvPath = path.join(batchFolderPath, pv);
+    if (fs.existsSync(pvPath)) { subfolders.push(pv); break; }
+  }
+
+  const allImages = [];
+  for (const subfolder of subfolders) {
+    const folderPath = path.join(batchFolderPath, subfolder);
+    if (!fs.existsSync(folderPath)) continue;
+    const entries = fs.readdirSync(folderPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && isImage(entry.name)) {
+        allImages.push({ name: entry.name, path: path.join(folderPath, entry.name), subfolder });
+      }
+    }
+  }
+
+  // Build tag list for a single image
+  const buildTags = (img) => {
+    const tags = [];
+    if (metadata.country) {
+      tags.push(`-IPTC:Country-PrimaryLocationCode="${metadata.country}"`);
+      tags.push(`-XMP:CountryCode="${metadata.country}"`);
+    }
+    if (metadata.gender)    tags.push(`-XMP:PersonInImage="${metadata.gender}"`);
+    if (metadata.ethnicity) tags.push(`-XMP:Subject="${metadata.ethnicity}"`);
+    if (metadata.device_os) tags.push(`-Make="${metadata.device_os}"`);
+    const desc = [
+      metadata.country       ? `Country:${metadata.country}`       : '',
+      metadata.date_of_birth ? `DOB:${metadata.date_of_birth}`     : '',
+      metadata.gender        ? `Gender:${metadata.gender}`         : '',
+      metadata.ethnicity     ? `Ethnicity:${metadata.ethnicity}`   : '',
+      metadata.device_os     ? `DeviceOS:${metadata.device_os}`   : '',
+    ].filter(Boolean).join(' | ');
+    if (desc) tags.push(`-XMP:Description="${desc}"`);
+    tags.push(`-Software="DatasetForge"`);
+    if (img.subfolder === 'Historical') {
+      const captureDate = historicalDates[img.name];
+      if (captureDate) {
+        const exifDate = captureDate
+          .replace(/^(\d{4})-(\d{2})-(\d{2})/, '$1:$2:$3')
+          .replace('T', ' ');
+        tags.push(`-DateTimeOriginal="${exifDate}"`);
+        tags.push(`-CreateDate="${exifDate}"`);
+      }
+    }
+    return tags;
+  };
+
+  const writeOne = (img) => new Promise((resolve) => {
+    const safeFile = img.path.replace(/"/g, '\\"');
+    const tags = buildTags(img);
+    if (tags.length === 0) { resolve(); return; }
+    const cmd = [`"${exifBin}"`, ...tags, '-overwrite_original_in_place', '-m', `"${safeFile}"`].join(' ');
+    exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
+      if (err) results.failed.push({ name: img.name, error: stderr || err.message });
+      else results.success.push(img.name);
+      resolve();
+    });
+  });
+
+  // Write in parallel batches of 6
+  const BATCH = 6;
+  for (let i = 0; i < allImages.length; i += BATCH) {
+    await Promise.all(allImages.slice(i, i + BATCH).map(writeOne));
+  }
+
+  return {
+    success: results.failed.length === 0,
+    written: results.success.length,
+    failed: results.failed,
+  };
+});
+
+ipcMain.handle('fs:readImageAsBase64', async (_, filePath) => {
+  try {
+    const ext = path.extname(filePath).toLowerCase();
+    const largeFormats = new Set(['.heic', '.heif', '.raw', '.cr2', '.nef', '.arw', '.tiff', '.tif']);
+
+    // For large/raw formats try embedded thumbnail via ExifTool (-b writes binary to stdout)
+    if (largeFormats.has(ext)) {
+      const thumb = await new Promise((resolve) => {
+        const exifBin = getExifToolPath();
+        const safeFile = filePath.replace(/"/g, '\\"');
+        // Use -b flag and capture stdout as binary buffer
+        const proc = require('child_process').spawn(
+          exifBin, ['-b', '-ThumbnailImage', safeFile], { timeout: 8000 }
+        );
+        const chunks = [];
+        proc.stdout.on('data', c => chunks.push(c));
+        proc.on('close', (code) => {
+          const buf = Buffer.concat(chunks);
+          if (buf.length < 200) { resolve(null); return; }
+          resolve(`data:image/jpeg;base64,${buf.toString('base64')}`);
+        });
+        proc.on('error', () => resolve(null));
+      });
+      if (thumb) return thumb;
+    }
+
+    // For JPG/PNG/WEBP/BMP: read full file but resize to max 400px wide for thumbnails
+    const data = fs.readFileSync(filePath);
+    const mimeExt = ext.replace('.', '');
+    const mime = mimeExt === 'jpg' ? 'jpeg' : mimeExt;
+    return `data:image/${mime};base64,${data.toString('base64')}`;
+  } catch { return null; }
+});
+
 ipcMain.handle('fs:saveMetadata', async (_, { batchFolderPath, filename, metadata }) => {
   const outputPath = path.join(batchFolderPath, filename || 'metadata.json');
   try {
     fs.writeFileSync(outputPath, JSON.stringify(metadata, null, 2), 'utf-8');
     return { success: true, outputPath };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
+  } catch (err) { return { success: false, error: err.message }; }
 });
 
-// Reveal file in Finder/Explorer
 ipcMain.handle('shell:showItemInFolder', async (_, filePath) => {
   shell.showItemInFolder(filePath);
 });

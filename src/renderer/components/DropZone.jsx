@@ -27,29 +27,45 @@ export default function DropZone({ onFolderSelected, isScanning, scanError }) {
     e.preventDefault();
     dragCounter.current = 0;
     setIsDragging(false);
-    const items = e.dataTransfer.items;
+    const items = Array.from(e.dataTransfer.items);
+    const files = Array.from(e.dataTransfer.files);
+
+    const folderPaths = [];
     for (const item of items) {
       if (item.kind === 'file') {
         const entry = item.webkitGetAsEntry?.();
         if (entry?.isDirectory) {
-          // In Electron, we can get the full path from files
           const file = item.getAsFile();
-          if (file?.path) { onFolderSelected(file.path); return; }
+          if (file?.path) folderPaths.push(file.path);
         }
       }
     }
-    // Fallback: get path from files
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length && files[0].path) {
-      const folderPath = files[0].path;
-      // If it's a file, get parent directory
-      onFolderSelected(folderPath);
+
+    if (folderPaths.length > 0) {
+      // Always pass the full array — App decides how to handle 1 vs many
+      onFolderSelected(folderPaths.length === 1 ? folderPaths[0] : folderPaths);
+      return;
+    }
+
+    // Fallback: files dropped — use parent directory
+    if (files.length > 0 && files[0].path) {
+      const firstPath = files[0].path;
+      const IMAGE_EXTS = new Set(['.jpg','.jpeg','.png','.tiff','.tif','.bmp','.webp','.heic','.heif','.raw','.cr2','.nef','.arw']);
+      const ext = firstPath.slice(firstPath.lastIndexOf('.')).toLowerCase();
+      const sep = firstPath.includes('\\') ? '\\' : '/';
+      const parent = firstPath.substring(0, firstPath.lastIndexOf(sep));
+      onFolderSelected(IMAGE_EXTS.has(ext) ? parent : firstPath);
     }
   }, [onFolderSelected]);
 
   const handleBrowse = useCallback(async () => {
     const folderPath = await window.electron.openFolderDialog();
     if (folderPath) onFolderSelected(folderPath);
+  }, [onFolderSelected]);
+
+  const handleBrowseFile = useCallback(async () => {
+    const filePath = await window.electron.openFileDialog();
+    if (filePath) onFolderSelected(filePath);
   }, [onFolderSelected]);
 
   return (
@@ -69,7 +85,7 @@ export default function DropZone({ onFolderSelected, isScanning, scanError }) {
           {isScanning ? (
             <ScanningState />
           ) : (
-            <IdleState isDragging={isDragging} onBrowse={handleBrowse} scanError={scanError} />
+            <IdleState isDragging={isDragging} onBrowse={handleBrowse} onBrowseFile={handleBrowseFile} scanError={scanError} />
           )}
         </div>
       </div>
@@ -83,7 +99,7 @@ export default function DropZone({ onFolderSelected, isScanning, scanError }) {
   );
 }
 
-function IdleState({ isDragging, onBrowse, scanError }) {
+function IdleState({ isDragging, onBrowse, onBrowseFile, scanError }) {
   return (
     <>
       <div className="dz-icon-wrap">
@@ -101,21 +117,30 @@ function IdleState({ isDragging, onBrowse, scanError }) {
       </div>
 
       <h1 className="dz-title">
-        {isDragging ? 'Release to load folder' : 'Drop a dataset folder'}
+        {isDragging ? 'Release to load' : 'Drop folder(s) here'}
       </h1>
       <p className="dz-subtitle">
-        Drag and drop any folder containing your image batches,<br />
-        or browse to select one manually.
+        Drop a root folder, or select multiple batch folders at once.<br />
+        Each batch must contain <code>Historical</code>, <code>Present_Neutral</code> and <code>Pose_Variation</code>.
       </p>
 
       <div className="dz-divider"><span>or</span></div>
 
-      <button className="dz-browse-btn" onClick={onBrowse}>
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path d="M2 4.5A1.5 1.5 0 013.5 3h3L8 5h4.5A1.5 1.5 0 0114 6.5v6A1.5 1.5 0 0112.5 14h-9A1.5 1.5 0 012 12.5v-8z" stroke="currentColor" strokeWidth="1.2" />
-        </svg>
-        Browse Folder
-      </button>
+      <div className="dz-browse-row">
+        <button className="dz-browse-btn" onClick={onBrowse}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M2 4.5A1.5 1.5 0 013.5 3h3L8 5h4.5A1.5 1.5 0 0114 6.5v6A1.5 1.5 0 0112.5 14h-9A1.5 1.5 0 012 12.5v-8z" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+          Browse Folder
+        </button>
+        <button className="dz-browse-btn dz-browse-btn-secondary" onClick={onBrowseFile}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M4 2h6l4 4v8a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.2" />
+            <path d="M9 2v4h4" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+          Browse File
+        </button>
+      </div>
 
       {scanError && (
         <div className="dz-error">

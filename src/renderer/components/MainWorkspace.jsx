@@ -8,7 +8,9 @@ export default function MainWorkspace({
   validationResult, referenceImageSrc,
   historicalDates, missingDateQueue,
   onUpdateDate, onStartJsonCreation, onSaveDirectly,
-  onRenameFolder, isProcessing, outputPath, onRefresh,
+  onRenameFolder, isProcessing, outputPath, writeStatus,
+  copiedCameraFields, setCopiedCameraFields, copyFeedback, setCopyFeedback,
+  onRefresh,
 }) {
   return (
     <div className="main-workspace">
@@ -39,10 +41,14 @@ export default function MainWorkspace({
           isProcessing={isProcessing}
           onUpdateDate={onUpdateDate}
           onSaveDirectly={onSaveDirectly}
+          copiedCameraFields={copiedCameraFields}
+          setCopiedCameraFields={setCopiedCameraFields}
+          copyFeedback={copyFeedback}
+          setCopyFeedback={setCopyFeedback}
         />
       )}
       {mode === WORKSPACE_MODE.COMPLETE && (
-        <CompleteView outputPath={outputPath} />
+        <CompleteView outputPath={outputPath} writeStatus={writeStatus} />
       )}
     </div>
   );
@@ -306,12 +312,149 @@ function PoseVariantRow({ found, batchPath, onRename }) {
 function JsonCreationView({
   referenceImageSrc, historicalDates, missingDateQueue,
   selectedBatchPath, isProcessing, onUpdateDate, onSaveDirectly,
+  copiedCameraFields, setCopiedCameraFields, copyFeedback, setCopyFeedback,
 }) {
-  const [selectedImage, setSelectedImage] = useState(null); // { name, path, src }
+  const [selectedImage, setSelectedImage] = useState(null);
   const [allHistoricalImages, setAllHistoricalImages] = useState([]);
-  const [loadedSrcs, setLoadedSrcs] = useState({}); // name → base64
+  const [loadedSrcs, setLoadedSrcs] = useState({});
   const [editingDate, setEditingDate] = useState('');
+  const [editingTime, setEditingTime] = useState('12:00');
+  const [editingAmPm, setEditingAmPm] = useState('AM');
   const [loadingImages, setLoadingImages] = useState(true);
+  const [imageCameraStatus, setImageCameraStatus] = useState({});
+  const [cameraFields, setCameraFields] = useState({
+    make: '', model: '', fNumber: '', exposureTime: '',
+    iso: '', exposureBias: '', focalLength: '', meteringMode: '', flash: '',
+  });
+  const [cameraFieldsExpanded, setCameraFieldsExpanded] = useState(false);
+
+  const CAMERA_PRESETS = [
+    // ── Samsung ──────────────────────────────────────────────
+    {
+      label: 'Samsung Galaxy S8 (2017)',
+      make: 'Samsung', model: 'SM-G950F',
+      fNumber: '1.7', exposureTime: '1/50', iso: '64',
+      exposureBias: '0', focalLength: '4.2 mm',
+      meteringMode: 'Center-weighted average', flash: 'Off, Did not fire',
+    },
+    {
+      label: 'Samsung Galaxy S10 (2019)',
+      make: 'Samsung', model: 'SM-G973F',
+      fNumber: '1.5', exposureTime: '1/100', iso: '50',
+      exposureBias: '0', focalLength: '4.3 mm',
+      meteringMode: 'Center-weighted average', flash: 'Off, Did not fire',
+    },
+    {
+      label: 'Samsung Galaxy S20 (2020)',
+      make: 'Samsung', model: 'SM-G980F',
+      fNumber: '1.8', exposureTime: '1/120', iso: '50',
+      exposureBias: '0', focalLength: '5.4 mm',
+      meteringMode: 'Center-weighted average', flash: 'Off, Did not fire',
+    },
+    {
+      label: 'Samsung Galaxy S21 (2021)',
+      make: 'Samsung', model: 'SM-G991B',
+      fNumber: '1.8', exposureTime: '1/125', iso: '50',
+      exposureBias: '0', focalLength: '6.7 mm',
+      meteringMode: 'Center-weighted average', flash: 'Off, Did not fire',
+    },
+    {
+      label: 'Samsung Galaxy S23 (2023)',
+      make: 'Samsung', model: 'SM-S911B',
+      fNumber: '1.8', exposureTime: '1/200', iso: '50',
+      exposureBias: '0', focalLength: '6.3 mm',
+      meteringMode: 'Center-weighted average', flash: 'Off, Did not fire',
+    },
+    // ── Apple ─────────────────────────────────────────────────
+    {
+      label: 'Apple iPhone X (2017)',
+      make: 'Apple', model: 'iPhone X',
+      fNumber: '1.8', exposureTime: '1/120', iso: '25',
+      exposureBias: '0', focalLength: '4.0 mm',
+      meteringMode: 'Multi-segment', flash: 'Off, Did not fire',
+    },
+    {
+      label: 'Apple iPhone 11 (2019)',
+      make: 'Apple', model: 'iPhone 11',
+      fNumber: '1.8', exposureTime: '1/121', iso: '32',
+      exposureBias: '0', focalLength: '4.25 mm',
+      meteringMode: 'Multi-segment', flash: 'Off, Did not fire',
+    },
+    {
+      label: 'Apple iPhone 13 Pro (2021)',
+      make: 'Apple', model: 'iPhone 13 Pro',
+      fNumber: '1.5', exposureTime: '1/33', iso: '500',
+      exposureBias: '0', focalLength: '5.7 mm',
+      meteringMode: 'Multi-segment', flash: 'Off, Did not fire',
+    },
+    {
+      label: 'Apple iPhone 14 (2022)',
+      make: 'Apple', model: 'iPhone 14',
+      fNumber: '1.5', exposureTime: '1/100', iso: '32',
+      exposureBias: '0', focalLength: '5.7 mm',
+      meteringMode: 'Multi-segment', flash: 'Off, Did not fire',
+    },
+    {
+      label: 'Apple iPhone 15 Pro (2023)',
+      make: 'Apple', model: 'iPhone 15 Pro',
+      fNumber: '1.78', exposureTime: '1/200', iso: '50',
+      exposureBias: '0', focalLength: '6.8 mm',
+      meteringMode: 'Multi-segment', flash: 'Off, Did not fire',
+    },
+    // ── Google Pixel ──────────────────────────────────────────
+    {
+      label: 'Google Pixel 4 (2019)',
+      make: 'Google', model: 'Pixel 4',
+      fNumber: '1.7', exposureTime: '1/120', iso: '54',
+      exposureBias: '0', focalLength: '4.4 mm',
+      meteringMode: 'Center-weighted average', flash: 'Off, Did not fire',
+    },
+    {
+      label: 'Google Pixel 5 (2020)',
+      make: 'Google', model: 'Pixel 5',
+      fNumber: '1.7', exposureTime: '1/150', iso: '50',
+      exposureBias: '0', focalLength: '4.4 mm',
+      meteringMode: 'Center-weighted average', flash: 'Off, Did not fire',
+    },
+    {
+      label: 'Google Pixel 7 (2022)',
+      make: 'Google', model: 'Pixel 7',
+      fNumber: '1.85', exposureTime: '1/200', iso: '50',
+      exposureBias: '0', focalLength: '6.8 mm',
+      meteringMode: 'Center-weighted average', flash: 'Off, Did not fire',
+    },
+  ];
+
+  const applyPreset = (presetLabel) => {
+    if (!presetLabel) return;
+    const preset = CAMERA_PRESETS.find(p => p.label === presetLabel);
+    if (!preset) return;
+    // Destructure label out — it must NOT go into cameraFields or the image meta
+    const { label, ...fields } = preset;
+    setCameraFields(fields);
+  };
+
+  const handleCopyMeta = async () => {
+    if (!selectedImage) return;
+    // Read current EXIF from the image via ExifTool
+    const exifData = await window.electron.readCameraMetadata(selectedImage.path);
+    if (exifData) {
+      setCopiedCameraFields(exifData);
+      setCopyFeedback(true);
+      setTimeout(() => setCopyFeedback(false), 2000);
+    }
+  };
+
+  const handlePasteMeta = async () => {
+    if (!selectedImage || !copiedCameraFields) return;
+    setCameraFields(copiedCameraFields);
+    setCameraFieldsExpanded(true);
+    // Also write it to the image immediately
+    await window.electron.writeCameraMetadata({
+      filePath: selectedImage.path,
+      cameraFields: copiedCameraFields,
+    });
+  };
 
   // Load all historical image thumbnails once
   React.useEffect(() => {
@@ -319,45 +462,74 @@ function JsonCreationView({
     let cancelled = false;
     (async () => {
       setLoadingImages(true);
+      setLoadedSrcs({});
       const historicalPath = `${selectedBatchPath}/Historical`;
       const images = await window.electron.getImagesInFolder(historicalPath);
       if (cancelled) return;
       setAllHistoricalImages(images);
 
-      // Load all thumbnails
-      const srcs = {};
-      for (const img of images) {
-        const b64 = await window.electron.readImageAsBase64(img.path);
+      // Load thumbnails in parallel batches of 20
+      const BATCH = 20;
+      for (let i = 0; i < images.length; i += BATCH) {
         if (cancelled) return;
-        srcs[img.name] = b64;
-        setLoadedSrcs(prev => ({ ...prev, [img.name]: b64 }));
+        const batch = images.slice(i, i + BATCH);
+        const results = await Promise.all(
+          batch.map(img => window.electron.readImageAsBase64(img.path))
+        );
+        if (cancelled) return;
+        setLoadedSrcs(prev => {
+          const next = { ...prev };
+          batch.forEach((img, idx) => { if (results[idx]) next[img.name] = results[idx]; });
+          return next;
+        });
       }
       setLoadingImages(false);
     })();
     return () => { cancelled = true; };
   }, [selectedBatchPath]);
 
-  const handleSelectImage = (img) => {
+  const handleSelectImage = async (img) => {
     setSelectedImage(img);
-    // Pre-fill date input if already has a date
     const existing = historicalDates[img.name];
-    if (existing) {
-      // strip T00:00:00 to get YYYY-MM-DD
-      setEditingDate(existing.slice(0, 10));
+    setEditingDate(existing ? existing.slice(0, 10) : '');
+    if (existing && existing.length > 10) {
+      const [hStr, mStr] = existing.slice(11, 16).split(':');
+      let h = parseInt(hStr, 10) || 0;
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      setEditingTime(`${String(h).padStart(2, '0')}:${mStr || '00'}`);
+      setEditingAmPm(ampm);
     } else {
-      setEditingDate('');
+      setEditingTime('12:00');
+      setEditingAmPm('AM');
+    }
+    const exifData = await window.electron.readCameraMetadata(img.path);
+    if (exifData) {
+      setCameraFields(exifData);
+      setCameraFieldsExpanded(false);
+      setImageCameraStatus(prev => ({ ...prev, [img.name]: true }));
+    } else {
+      setCameraFields({ make: '', model: '', fNumber: '', exposureTime: '', iso: '', exposureBias: '', focalLength: '', meteringMode: '', flash: '' });
+      setImageCameraStatus(prev => ({ ...prev, [img.name]: false }));
     }
   };
 
   const handleConfirmDate = () => {
     if (!editingDate || !selectedImage) return;
-    onUpdateDate(selectedImage.name, editingDate);
-    // Advance to next missing image automatically
+    // Convert 12-hour to 24-hour for storage
+    const [hStr, mStr] = editingTime.split(':');
+    let h = parseInt(hStr, 10) || 0;
+    if (editingAmPm === 'AM' && h === 12) h = 0;
+    if (editingAmPm === 'PM' && h !== 12) h += 12;
+    const time24 = `${String(h).padStart(2, '0')}:${mStr || '00'}`;
+    onUpdateDate(selectedImage.name, editingDate, time24);
     const missingNames = missingDateQueue.map(m => m.name).filter(n => n !== selectedImage.name);
     const nextMissing = allHistoricalImages.find(img => missingNames.includes(img.name));
     if (nextMissing) {
       setSelectedImage(nextMissing);
       setEditingDate('');
+      setEditingTime('12:00');
+      setEditingAmPm('AM');
     } else {
       setSelectedImage(null);
       setEditingDate('');
@@ -397,11 +569,19 @@ function JsonCreationView({
           )}
         </div>
         <div className="ws-toolbar-right">
-          {allResolved && (
-            <button className="btn btn-primary" onClick={onSaveDirectly}>
-              ⊕ Save metadata.json
-            </button>
+          {missingCount > 0 && (
+            <span className="inline-warning" style={{ fontSize: 10 }}>
+              ⚠ {missingCount} image{missingCount !== 1 ? 's' : ''} still missing dates
+            </span>
           )}
+          <button
+            className="btn btn-primary"
+            onClick={onSaveDirectly}
+            disabled={totalCount === 0}
+            title={missingCount > 0 ? `Save now — ${missingCount} image(s) will have no date` : 'Save metadata.json'}
+          >
+            ⊕ Save metadata.json
+          </button>
         </div>
       </div>
 
@@ -451,7 +631,7 @@ function JsonCreationView({
                     </div>
                     {hasMeta && (
                       <div className="grid-cell-date mono">
-                        {historicalDates[img.name].slice(0, 10)}
+                        {historicalDates[img.name].slice(0, 16).replace('T', ' ')}
                       </div>
                     )}
                   </div>
@@ -469,6 +649,24 @@ function JsonCreationView({
                     <span className="accent-dot" /> SELECTED IMAGE
                   </span>
                   <span className="date-editor-filename mono truncate">{selectedImage.name}</span>
+                  <div className="copy-paste-row">
+                    <button
+                      className="btn-copy-meta"
+                      onClick={handleCopyMeta}
+                      title="Copy camera metadata from this image"
+                    >
+                      {copyFeedback ? '✓ Copied' : '⎘ Copy Meta'}
+                    </button>
+                    {copiedCameraFields && (
+                      <button
+                        className="btn-paste-meta"
+                        onClick={handlePasteMeta}
+                        title="Paste copied camera metadata into this image"
+                      >
+                        ⎘ Paste Meta
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="date-editor-preview">
@@ -504,6 +702,35 @@ function JsonCreationView({
                     onKeyDown={e => e.key === 'Enter' && handleConfirmDate()}
                     autoFocus
                   />
+                  <label className="field-label mono" style={{ marginTop: 8 }}>Capture time</label>
+                  <div className="time-input-row">
+                    <input
+                      type="time"
+                      value={(() => {
+                        const [hStr, mStr] = editingTime.split(':');
+                        let h = parseInt(hStr, 10) || 12;
+                        if (editingAmPm === 'AM' && h === 12) h = 0;
+                        if (editingAmPm === 'PM' && h !== 12) h += 12;
+                        return `${String(h).padStart(2,'0')}:${mStr||'00'}`;
+                      })()}
+                      onChange={e => {
+                        const [hStr, mStr] = e.target.value.split(':');
+                        let h = parseInt(hStr, 10) || 0;
+                        const ampm = h >= 12 ? 'PM' : 'AM';
+                        h = h % 12 || 12;
+                        setEditingTime(`${String(h).padStart(2,'0')}:${mStr||'00'}`);
+                        setEditingAmPm(ampm);
+                      }}
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      className={`ampm-toggle ${editingAmPm === 'AM' ? 'ampm-am' : 'ampm-pm'}`}
+                      onClick={() => setEditingAmPm(p => p === 'AM' ? 'PM' : 'AM')}
+                      type="button"
+                    >
+                      {editingAmPm}
+                    </button>
+                  </div>
                   <button
                     className="btn btn-primary"
                     style={{ marginTop: 10, width: '100%' }}
@@ -528,6 +755,65 @@ function JsonCreationView({
                     </p>
                   )}
                 </div>
+
+                {/* Camera metadata — shown for ALL images */}
+                <div className="camera-fields-section">
+                  <button
+                    className="camera-fields-toggle"
+                    onClick={() => setCameraFieldsExpanded(p => !p)}
+                  >
+                    <span className="camera-toggle-icon">{cameraFieldsExpanded ? '▾' : '▸'}</span>
+                    <span className="field-label mono">Camera Metadata</span>
+                    {imageCameraStatus[selectedImage.name] === true && (
+                      <span className="camera-status-badge camera-status-ok">✓ present</span>
+                    )}
+                    {imageCameraStatus[selectedImage.name] === false && (
+                      <span className="camera-status-badge camera-status-missing">⚠ missing</span>
+                    )}
+                  </button>
+
+                    {cameraFieldsExpanded && (
+                      <div className="camera-fields-body">
+                        {/* Preset selector */}
+                        <div className="camera-preset-row">
+                          <label className="field-label mono">Preset</label>
+                          <select
+                            onChange={e => applyPreset(e.target.value)}
+                            defaultValue=""
+                          >
+                            <option value="">— select preset —</option>
+                            {CAMERA_PRESETS.map(p => (
+                              <option key={p.label} value={p.label}>{p.label}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <CameraField label="Camera Maker"    value={cameraFields.make}          onChange={v => setCameraFields(p => ({...p, make: v}))}          placeholder="e.g. Samsung" />
+                        <CameraField label="Camera Model"    value={cameraFields.model}         onChange={v => setCameraFields(p => ({...p, model: v}))}         placeholder="e.g. Galaxy S23" />
+                        <CameraField label="F-Stop"          value={cameraFields.fNumber}       onChange={v => setCameraFields(p => ({...p, fNumber: v}))}       placeholder="e.g. f/1.8" />
+                        <CameraField label="Exposure Time"   value={cameraFields.exposureTime}  onChange={v => setCameraFields(p => ({...p, exposureTime: v}))}  placeholder="e.g. 1/120" />
+                        <CameraField label="ISO Speed"       value={cameraFields.iso}           onChange={v => setCameraFields(p => ({...p, iso: v}))}           placeholder="e.g. 50" />
+                        <CameraField label="Exposure Bias"   value={cameraFields.exposureBias}  onChange={v => setCameraFields(p => ({...p, exposureBias: v}))}  placeholder="e.g. 0" />
+                        <CameraField label="Focal Length"    value={cameraFields.focalLength}   onChange={v => setCameraFields(p => ({...p, focalLength: v}))}   placeholder="e.g. 23mm" />
+                        <CameraField label="Metering Mode"   value={cameraFields.meteringMode}  onChange={v => setCameraFields(p => ({...p, meteringMode: v}))}  placeholder="e.g. Center-weighted" />
+                        <CameraField label="Flash Mode"      value={cameraFields.flash}         onChange={v => setCameraFields(p => ({...p, flash: v}))}         placeholder="e.g. No flash" />
+
+                        <button
+                          className="btn btn-primary"
+                          style={{ marginTop: 8, width: '100%' }}
+                          onClick={() => {
+                            window.electron.writeCameraMetadata({
+                              filePath: selectedImage.path,
+                              cameraFields,
+                            });
+                          }}
+                          disabled={!Object.values(cameraFields).some(v => v)}
+                        >
+                          ⊕ Write Camera Metadata
+                        </button>
+                      </div>
+                    )}
+                  </div>
               </>
             ) : (
               <div className="date-editor-empty">
@@ -548,21 +834,61 @@ function JsonCreationView({
   );
 }
 
+// ── Camera Field helper ──────────────────────────────────────────
+function CameraField({ label, value, onChange, placeholder }) {
+  return (
+    <div className="camera-field">
+      <label className="field-label mono">{label}</label>
+      <input
+        type="text"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+      />
+    </div>
+  );
+}
+
 // ── Complete View ────────────────────────────────────────────────
-function CompleteView({ outputPath }) {
+function CompleteView({ outputPath, writeStatus }) {
   return (
     <div className="ws-view ws-complete">
       <div className="complete-inner">
         <div className="complete-icon">✓</div>
-        <h2>metadata.json saved</h2>
+        <h2>Done</h2>
         <p className="complete-path mono" title={outputPath}>{outputPath}</p>
+
+        {writeStatus && (
+          <div className="write-status">
+            <div className="write-status-row">
+              <span className="ws-badge" style={{ background: 'var(--accent-green-dim)', color: 'var(--accent-green)', border: '1px solid rgba(0,229,160,0.3)' }}>
+                ✓ {writeStatus.written} images tagged
+              </span>
+              {writeStatus.failed?.length > 0 && (
+                <span className="ws-badge badge-warn">
+                  ⚠ {writeStatus.failed.length} failed
+                </span>
+              )}
+            </div>
+            {writeStatus.failed?.length > 0 && (
+              <div className="write-failed-list">
+                {writeStatus.failed.map(f => (
+                  <div key={f.name} className="write-failed-item mono">
+                    {f.name}: {f.error}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <button
           className="btn btn-secondary"
           onClick={() => window.electron.showItemInFolder(outputPath)}
         >
-          ⊞ Reveal in Finder
+          ⊞ Reveal in Folder
         </button>
       </div>
     </div>
   );
-} 
+}

@@ -1,54 +1,53 @@
 // src/renderer/components/WorkspaceLayout.jsx
-import React, { useState, useCallback } from 'react';
-import FileExplorer from './FileExplorer';
+import React, { useState, useCallback } from 'react';import FileExplorer from './FileExplorer';
 import MainWorkspace from './MainWorkspace';
 import MetadataPanel from './MetadataPanel';
 import './WorkspaceLayout.css';
 
 export const WORKSPACE_MODE = {
-  IMAGE_LIST:        'IMAGE_LIST',
-  VALIDATION_ERROR:  'VALIDATION_ERROR',
-  JSON_CREATION:     'JSON_CREATION',
-  MANUAL_DATE:       'MANUAL_DATE',
-  COMPLETE:          'COMPLETE',
+  IMAGE_LIST:       'IMAGE_LIST',
+  VALIDATION_ERROR: 'VALIDATION_ERROR',
+  JSON_CREATION:    'JSON_CREATION',
+  COMPLETE:         'COMPLETE',
 };
 
 const EMPTY_METADATA = {
-  country: '',
-  date_of_birth: '',
-  gender: '',
-  ethnicity: '',
-  device_os: '',
+  country: '', date_of_birth: '', gender: '', ethnicity: '', device_os: '',
 };
 
-export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefresh, onReset }) {
-  const [mode, setMode] = useState(WORKSPACE_MODE.IMAGE_LIST);
+export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefresh, onReset, initialBatchPath }) {
+  const [mode, setMode]                       = useState(WORKSPACE_MODE.IMAGE_LIST);
   const [selectedBatchPath, setSelectedBatchPath] = useState(null);
-  const [validationResult, setValidationResult] = useState(null);
-  const [metadata, setMetadata] = useState(EMPTY_METADATA);
-
-  // JSON creation state
+  const [validationResult, setValidationResult]   = useState(null);
+  const [metadata, setMetadata]               = useState(EMPTY_METADATA);
   const [referenceImageSrc, setReferenceImageSrc] = useState(null);
   const [historicalDates, setHistoricalDates] = useState({});
-  const [missingDateQueue, setMissingDateQueue] = useState([]);
-  const [currentMissingIdx, setCurrentMissingIdx] = useState(0);
-  const [currentMissingImageSrc, setCurrentMissingImageSrc] = useState(null);
-  const [manualDate, setManualDate] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [outputPath, setOutputPath] = useState(null);
-  const [poseVariantFound, setPoseVariantFound] = useState(null);
+  const [missingDateQueue, setMissingDateQueue]   = useState([]);
+  const [isProcessing, setIsProcessing]       = useState(false);
+  const [outputPath, setOutputPath]           = useState(null);
+  const [poseVariantFound, setPoseVariantFound]   = useState(null);
+  const [writeStatus, setWriteStatus]         = useState(null);
+  const [copiedCameraFields, setCopiedCameraFields] = useState(null);
+  const [copyFeedback, setCopyFeedback]       = useState(false);
 
-  // ── Select batch folder from tree ────────────────────────────
+  // Auto-select batch if root IS a batch folder (single folder dropped)
+  React.useEffect(() => {
+    if (initialBatchPath) {
+      handleSelectBatch({ path: initialBatchPath });
+    }
+  }, [initialBatchPath]);
+
+  // ── Select batch folder ──────────────────────────────────────
   const handleSelectBatch = useCallback(async (node) => {
     setSelectedBatchPath(node.path);
     setMode(WORKSPACE_MODE.IMAGE_LIST);
     setValidationResult(null);
     setOutputPath(null);
+    setWriteStatus(null);
 
     const result = await window.electron.validateBatchFolder(node.path);
     setValidationResult(result);
     setPoseVariantFound(result.poseVariantFound);
-
     if (!result.valid) setMode(WORKSPACE_MODE.VALIDATION_ERROR);
   }, []);
 
@@ -57,23 +56,17 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
     if (!selectedBatchPath || !validationResult?.valid) return;
     setIsProcessing(true);
     setMode(WORKSPACE_MODE.JSON_CREATION);
-
     try {
-      // Load reference image from Present_Neutral
       const neutralPath = `${selectedBatchPath}/Present_Neutral`;
       const imgPath = await window.electron.getRandomImage(neutralPath);
       if (imgPath) {
         const b64 = await window.electron.readImageAsBase64(imgPath);
         setReferenceImageSrc(b64);
       }
-
-      // Extract dates from Historical — populate grid
       const historicalPath = `${selectedBatchPath}/Historical`;
       const { dates, missingQueue } = await window.electron.extractHistoricalDates(historicalPath);
       setHistoricalDates(dates);
       setMissingDateQueue(missingQueue);
-      setCurrentMissingIdx(0);
-      // No longer auto-switching to MANUAL_DATE — user edits inline in grid
     } finally {
       setIsProcessing(false);
     }
@@ -82,7 +75,6 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
   // ── Inline date update from grid ─────────────────────────────
   const handleUpdateDate = useCallback((filename, dateValue) => {
     if (dateValue === null) {
-      // Remove the date — add back to missing queue
       setHistoricalDates(prev => {
         const next = { ...prev };
         delete next[filename];
@@ -104,31 +96,47 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
   }, [historicalDates, metadata]);
 
   const saveMetadata = async (dates) => {
-    const sortedDates = Object.keys(dates)
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
-      .reduce((acc, key) => { acc[key] = dates[key]; return acc; }, {});
+    setIsProcessing(true);
+    setWriteStatus(null);
+    try {
+      // 1. Write metadata into every image file via ExifTool
+      const writeResult = await window.electron.writeImageMetadata({
+        batchFolderPath: selectedBatchPath,
+        metadata,
+        historicalDates: dates,
+      });
+      setWriteStatus(writeResult);
 
-    const finalMetadata = {
-      ...metadata,
-      historic_capture_dates: sortedDates,
-    };
-    const result = await window.electron.saveMetadata({
-      batchFolderPath: selectedBatchPath,
-      filename: 'metadata.json',
-      metadata: finalMetadata,
-    });
-    if (result.success) {
-      setOutputPath(result.outputPath);
-      setMode(WORKSPACE_MODE.COMPLETE);
+      // 2. Sort dates and save JSON
+      const sortedDates = Object.keys(dates)
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+        .reduce((acc, key) => { acc[key] = dates[key]; return acc; }, {});
+
+      const finalMetadata = {
+        ...metadata,
+        historic_capture_dates: sortedDates,
+      };
+
+      const result = await window.electron.saveMetadata({
+        batchFolderPath: selectedBatchPath,
+        filename: 'metadata.json',
+        metadata: finalMetadata,
+      });
+
+      if (result.success) {
+        setOutputPath(result.outputPath);
+        setMode(WORKSPACE_MODE.COMPLETE);
+      }
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  // ── Rename folder callback ───────────────────────────────────
+  // ── Rename folder ────────────────────────────────────────────
   const handleRenameFolder = useCallback(async (folderPath, newName) => {
     const result = await window.electron.renameFolder({ oldPath: folderPath, newName });
     if (result.success) {
       await onRefresh();
-      // Re-select if renamed folder was our batch
       if (folderPath === selectedBatchPath) setSelectedBatchPath(result.newPath);
     }
     return result;
@@ -136,7 +144,6 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
 
   return (
     <div className="workspace-layout">
-      {/* Left: File Explorer */}
       <aside className="panel panel-left">
         <PanelHeader label="EXPLORER" icon="⬡" />
         <div className="panel-body">
@@ -149,7 +156,6 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
         </div>
       </aside>
 
-      {/* Middle: Main Workspace */}
       <main className="panel panel-main">
         <MainWorkspace
           mode={mode}
@@ -166,11 +172,15 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
           onRenameFolder={handleRenameFolder}
           isProcessing={isProcessing}
           outputPath={outputPath}
+          writeStatus={writeStatus}
+          copiedCameraFields={copiedCameraFields}
+          setCopiedCameraFields={setCopiedCameraFields}
+          copyFeedback={copyFeedback}
+          setCopyFeedback={setCopyFeedback}
           onRefresh={onRefresh}
         />
       </main>
 
-      {/* Right: Metadata Panel */}
       <aside className="panel panel-right">
         <PanelHeader label="METADATA" icon="◈" />
         <div className="panel-body">

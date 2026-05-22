@@ -491,12 +491,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 350px;
-  min-width: 100px;
+  height: 280px;
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
 }
 .date-editor-img {
-  max-width: 400px;
-  max-height: 480px;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   display: block;
 }
@@ -592,4 +594,198 @@
   max-width: 400px;
   overflow-wrap: break-word;
   text-align: center;
+}
+/* ── Write Status (Complete screen) ───────────────────────────── */
+.write-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 360px;
+}
+.write-status-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.write-failed-list {
+  width: 100%;
+  background: var(--bg-void);
+  border: 1px solid rgba(255,77,77,0.2);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.write-failed-item {
+  font-size: 10px;
+  color: var(--accent-red);
+}
+
+/* ── Camera Metadata Fields ────────────────────────────────────── */
+.camera-fields-section {
+  border-top: 1px solid var(--border-dim);
+  flex-shrink: 0;
+}
+
+.camera-fields-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+.camera-fields-toggle:hover { background: var(--bg-hover); }
+
+.camera-toggle-icon {
+  font-size: 10px;
+  color: var(--accent-cyan);
+  width: 10px;
+  flex-shrink: 0;
+}
+
+.camera-toggle-hint {
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-left: auto;
+  font-family: var(--font-mono);
+}
+
+.camera-fields-body {
+  padding: 0 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.camera-preset-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-dim);
+  margin-bottom: 4px;
+}
+
+.camera-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* ── Copy / Paste Meta buttons ─────────────────────────────────── */
+.copy-paste-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.btn-copy-meta,
+.btn-paste-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  letter-spacing: 0.04em;
+}
+
+.btn-copy-meta {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+.btn-copy-meta:hover {
+  background: var(--accent-cyan-dim);
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+
+.btn-paste-meta {
+  background: var(--accent-cyan-dim);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0,212,255,0.3);
+}
+.btn-paste-meta:hover {
+  background: var(--accent-cyan);
+  color: #0d0f12;
+}
+
+/* ── Camera Status Badge ───────────────────────────────────────── */
+.camera-status-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 20px;
+  margin-left: auto;
+  letter-spacing: 0.05em;
+}
+.camera-status-ok {
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
+  border: 1px solid rgba(0,229,160,0.3);
+}
+.camera-status-missing {
+  background: var(--accent-amber-dim);
+  color: var(--accent-amber);
+  border: 1px solid rgba(255,176,32,0.3);
+}
+
+/* ── Time Input Row ────────────────────────────────────────────── */
+.time-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.time-input-row input[type="time"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.ampm-toggle {
+  flex-shrink: 0;
+  width: 44px;
+  padding: 7px 0;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--border-subtle);
+  transition: all var(--transition-fast);
+  text-align: center;
+}
+
+.ampm-am {
+  background: var(--accent-cyan-dim);
+  color: var(--accent-cyan);
+  border-color: rgba(0,212,255,0.3);
+}
+
+.ampm-am:hover {
+  background: rgba(0,212,255,0.2);
+}
+
+.ampm-pm {
+  background: var(--accent-purple-dim);
+  color: var(--accent-purple);
+  border-color: rgba(183,148,244,0.3);
+}
+
+.ampm-pm:hover {
+  background: rgba(183,148,244,0.2);
 }
