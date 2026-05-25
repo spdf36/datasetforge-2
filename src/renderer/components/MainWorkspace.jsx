@@ -449,7 +449,9 @@ function JsonCreationView({
     if (!selectedImage || !copiedCameraFields) return;
     setCameraFields(copiedCameraFields);
     setCameraFieldsExpanded(true);
-    // Also write it to the image immediately
+    // Mark as having camera meta so re-select won't clear the pasted fields
+    setImageCameraStatus(prev => ({ ...prev, [selectedImage.name]: true }));
+    // Write to disk
     await window.electron.writeCameraMetadata({
       filePath: selectedImage.path,
       cameraFields: copiedCameraFields,
@@ -489,6 +491,7 @@ function JsonCreationView({
   }, [selectedBatchPath]);
 
   const handleSelectImage = async (img) => {
+    const alreadySelected = selectedImage?.name === img.name;
     setSelectedImage(img);
     const existing = historicalDates[img.name];
     setEditingDate(existing ? existing.slice(0, 10) : '');
@@ -503,6 +506,8 @@ function JsonCreationView({
       setEditingTime('12:00');
       setEditingAmPm('AM');
     }
+    // If same image re-selected right after paste, keep pasted fields visible
+    if (alreadySelected) return;
     const exifData = await window.electron.readCameraMetadata(img.path);
     if (exifData) {
       setCameraFields(exifData);

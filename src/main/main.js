@@ -2,7 +2,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const { pathToFileURL } = require('url');
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
@@ -96,9 +96,8 @@ function getExifToolPath() {
 function extractDateWithExiftool(filePath) {
   return new Promise((resolve) => {
     const exifBin = getExifToolPath();
-    const safeFile = filePath.replace(/"/g, '\\"');
-    const cmd = `"${exifBin}" -DateTimeOriginal -CreateDate -json "${safeFile}"`;
-    exec(cmd, { timeout: 15000 }, (err, stdout) => {
+    const args = ['-DateTimeOriginal', '-CreateDate', '-json', filePath];
+    execFile(exifBin, args, { timeout: 15000 }, (err, stdout) => {
       if (err || !stdout) { resolve(null); return; }
       try {
         const data = JSON.parse(stdout);
@@ -225,9 +224,8 @@ ipcMain.handle('exif:extractHistoricalDates', async (_, historicalFolderPath) =>
   // Run ONE ExifTool call on all files at once — massively faster than N calls
   await new Promise((resolve) => {
     const exifBin = getExifToolPath();
-    const filePaths = images.map(img => `"${img.path.replace(/"/g, '\\"')}"`).join(' ');
-    const cmd = `"${exifBin}" -DateTimeOriginal -CreateDate -FileName -json ${filePaths}`;
-    exec(cmd, { timeout: 60000, maxBuffer: 50 * 1024 * 1024 }, (err, stdout) => {
+    const args = ['-DateTimeOriginal', '-CreateDate', '-FileName', '-json', ...images.map(img => img.path)];
+    execFile(exifBin, args, { timeout: 60000, maxBuffer: 50 * 1024 * 1024 }, (err, stdout) => {
       if (err || !stdout) { resolve(); return; }
       try {
         const results = JSON.parse(stdout);
@@ -258,18 +256,15 @@ ipcMain.handle('exif:extractHistoricalDates', async (_, historicalFolderPath) =>
 ipcMain.handle('exif:removeDate', async (_, filePath) => {
   return new Promise((resolve) => {
     const exifBin = getExifToolPath();
-    const safeFile = filePath.replace(/"/g, '\\"');
-    const cmd = [
-      `"${exifBin}"`,
+    const args = [
       '-DateTimeOriginal=', '-CreateDate=', '-ModifyDate=',
       '-FileModifyDate=', '-FileCreateDate=', '-MetadataDate=',
       '-DateTime=', '-Date=',
       '-XMP:DateTimeOriginal=', '-XMP:CreateDate=', '-XMP:ModifyDate=', '-XMP:MetadataDate=',
       '-IPTC:DateCreated=', '-IPTC:TimeCreated=', '-IPTC:DigitalCreationDate=', '-IPTC:DigitalCreationTime=',
-      '-overwrite_original_in_place', '-m',
-      `"${safeFile}"`
-    ].join(' ');
-    exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
+      '-overwrite_original_in_place', '-m', filePath,
+    ];
+    execFile(exifBin, args, { timeout: 15000 }, (err, stdout, stderr) => {
       if (err) resolve({ success: false, error: stderr || err.message });
       else resolve({ success: true });
     });
@@ -280,9 +275,8 @@ ipcMain.handle('exif:removeDate', async (_, filePath) => {
 ipcMain.handle('exif:readCameraMetadata', async (_, filePath) => {
   return new Promise((resolve) => {
     const exifBin = getExifToolPath();
-    const safeFile = filePath.replace(/"/g, '\\"');
-    const cmd = `"${exifBin}" -Make -Model -FNumber -ExposureTime -ISO -ExposureCompensation -FocalLength -MeteringMode -Flash -json "${safeFile}"`;
-    exec(cmd, { timeout: 15000 }, (err, stdout) => {
+    const args = ['-Make', '-Model', '-FNumber', '-ExposureTime', '-ISO', '-ExposureCompensation', '-FocalLength', '-MeteringMode', '-Flash', '-json', filePath];
+    execFile(exifBin, args, { timeout: 15000 }, (err, stdout) => {
       if (err || !stdout) { resolve(null); return; }
       try {
         const data = JSON.parse(stdout)[0];
@@ -309,60 +303,37 @@ ipcMain.handle('exif:readCameraMetadata', async (_, filePath) => {
 ipcMain.handle('exif:writeCameraMetadata', async (_, { filePath, cameraFields }) => {
   return new Promise((resolve) => {
     const exifBin = getExifToolPath();
-    const safeFile = filePath.replace(/"/g, '\\"');
+    const args = [];
 
-    const tags = [];
+    if (cameraFields.make)  args.push(`-Make=${cameraFields.make}`);
+    if (cameraFields.model) args.push(`-Model=${cameraFields.model}`);
 
-    // Make / Model — plain strings
-    if (cameraFields.make)  tags.push(`-Make="${cameraFields.make}"`);
-    if (cameraFields.model) tags.push(`-Model="${cameraFields.model}"`);
-
-    // FNumber — strip any leading "f/" and write numeric e.g. 1.8
     if (cameraFields.fNumber) {
       const fn = cameraFields.fNumber.toString().replace(/^f\//i, '');
-      tags.push(`-FNumber=${fn}`);
-      tags.push(`-ApertureValue=${fn}`);
+      args.push(`-FNumber=${fn}`, `-ApertureValue=${fn}`);
     }
-
-    // ExposureTime — accept "1/120" or "0.008" and write as rational e.g. 1/120
     if (cameraFields.exposureTime) {
       const et = cameraFields.exposureTime.toString().trim();
-      tags.push(`-ExposureTime=${et}`);
-      tags.push(`-ShutterSpeedValue=${et}`);
+      args.push(`-ExposureTime=${et}`, `-ShutterSpeedValue=${et}`);
     }
-
-    // ISO
     if (cameraFields.iso) {
       const iso = parseInt(cameraFields.iso, 10);
-      if (!isNaN(iso)) tags.push(`-ISO=${iso}`);
+      if (!isNaN(iso)) args.push(`-ISO=${iso}`);
     }
-
-    // ExposureBias / ExposureCompensation — numeric e.g. 0
     if (cameraFields.exposureBias !== undefined && cameraFields.exposureBias !== '') {
-      tags.push(`-ExposureCompensation=${cameraFields.exposureBias}`);
-      tags.push(`-ExposureBiasValue=${cameraFields.exposureBias}`);
+      args.push(`-ExposureCompensation=${cameraFields.exposureBias}`, `-ExposureBiasValue=${cameraFields.exposureBias}`);
     }
-
-    // FocalLength — strip "mm" suffix, write numeric e.g. 4.2
     if (cameraFields.focalLength) {
       const fl = cameraFields.focalLength.toString().replace(/\s*mm$/i, '').trim();
-      tags.push(`-FocalLength=${fl}`);
+      args.push(`-FocalLength=${fl}`);
     }
+    if (cameraFields.meteringMode) args.push(`-MeteringMode=${cameraFields.meteringMode}`);
+    if (cameraFields.flash)        args.push(`-Flash=${cameraFields.flash}`);
 
-    // MeteringMode — ExifTool accepts the string label directly
-    if (cameraFields.meteringMode) {
-      tags.push(`-MeteringMode="${cameraFields.meteringMode}"`);
-    }
+    if (args.length === 0) { resolve({ success: true }); return; }
 
-    // Flash — ExifTool accepts the string label directly
-    if (cameraFields.flash) {
-      tags.push(`-Flash="${cameraFields.flash}"`);
-    }
-
-    if (tags.length === 0) { resolve({ success: true }); return; }
-
-    const cmd = [`"${exifBin}"`, ...tags, '-overwrite_original_in_place', '-m', `"${safeFile}"`].join(' ');
-    exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
+    args.push('-overwrite_original_in_place', '-m', filePath);
+    execFile(exifBin, args, { timeout: 15000 }, (err, stdout, stderr) => {
       if (err) resolve({ success: false, error: stderr || err.message });
       else resolve({ success: true });
     });
@@ -394,44 +365,43 @@ ipcMain.handle('exif:writeImageMetadata', async (_, { batchFolderPath, metadata,
     }
   }
 
-  // Build tag list for a single image
-  const buildTags = (img) => {
-    const tags = [];
+  // Build arg list for a single image
+  const buildArgs = (img) => {
+    const args = [];
     if (metadata.country) {
-      tags.push(`-IPTC:Country-PrimaryLocationCode="${metadata.country}"`);
-      tags.push(`-XMP:CountryCode="${metadata.country}"`);
+      args.push(`-IPTC:Country-PrimaryLocationCode=${metadata.country}`);
+      args.push(`-XMP:CountryCode=${metadata.country}`);
     }
-    if (metadata.gender)    tags.push(`-XMP:PersonInImage="${metadata.gender}"`);
-    if (metadata.ethnicity) tags.push(`-XMP:Subject="${metadata.ethnicity}"`);
-    if (metadata.device_os) tags.push(`-Make="${metadata.device_os}"`);
+    if (metadata.gender)    args.push(`-XMP:PersonInImage=${metadata.gender}`);
+    if (metadata.ethnicity) args.push(`-XMP:Subject=${metadata.ethnicity}`);
+    if (metadata.device_os) args.push(`-Make=${metadata.device_os}`);
     const desc = [
-      metadata.country       ? `Country:${metadata.country}`       : '',
-      metadata.date_of_birth ? `DOB:${metadata.date_of_birth}`     : '',
-      metadata.gender        ? `Gender:${metadata.gender}`         : '',
-      metadata.ethnicity     ? `Ethnicity:${metadata.ethnicity}`   : '',
-      metadata.device_os     ? `DeviceOS:${metadata.device_os}`   : '',
+      metadata.country       ? `Country:${metadata.country}`     : '',
+      metadata.date_of_birth ? `DOB:${metadata.date_of_birth}`   : '',
+      metadata.gender        ? `Gender:${metadata.gender}`       : '',
+      metadata.ethnicity     ? `Ethnicity:${metadata.ethnicity}` : '',
+      metadata.device_os     ? `DeviceOS:${metadata.device_os}` : '',
     ].filter(Boolean).join(' | ');
-    if (desc) tags.push(`-XMP:Description="${desc}"`);
-    tags.push(`-Software="DatasetForge"`);
+    if (desc) args.push(`-XMP:Description=${desc}`);
+    args.push('-Software=DatasetForge');
     if (img.subfolder === 'Historical') {
       const captureDate = historicalDates[img.name];
       if (captureDate) {
         const exifDate = captureDate
           .replace(/^(\d{4})-(\d{2})-(\d{2})/, '$1:$2:$3')
           .replace('T', ' ');
-        tags.push(`-DateTimeOriginal="${exifDate}"`);
-        tags.push(`-CreateDate="${exifDate}"`);
+        args.push(`-DateTimeOriginal=${exifDate}`);
+        args.push(`-CreateDate=${exifDate}`);
       }
     }
-    return tags;
+    return args;
   };
 
   const writeOne = (img) => new Promise((resolve) => {
-    const safeFile = img.path.replace(/"/g, '\\"');
-    const tags = buildTags(img);
-    if (tags.length === 0) { resolve(); return; }
-    const cmd = [`"${exifBin}"`, ...tags, '-overwrite_original_in_place', '-m', `"${safeFile}"`].join(' ');
-    exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
+    const args = buildArgs(img);
+    if (args.length === 0) { resolve(); return; }
+    args.push('-overwrite_original_in_place', '-m', img.path);
+    execFile(exifBin, args, { timeout: 15000 }, (err, stdout, stderr) => {
       if (err) results.failed.push({ name: img.name, error: stderr || err.message });
       else results.success.push(img.name);
       resolve();
