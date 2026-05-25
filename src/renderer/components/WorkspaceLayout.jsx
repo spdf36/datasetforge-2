@@ -73,7 +73,7 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
   }, [selectedBatchPath, validationResult]);
 
   // ── Inline date update from grid ─────────────────────────────
-  const handleUpdateDate = useCallback((filename, dateValue, timeValue = '00:00:00') => {
+  const handleUpdateDate = useCallback((filename, dateValue, timeValue = '12:00', ampm = 'AM') => {
     if (dateValue === null) {
       setHistoricalDates(prev => {
         const next = { ...prev };
@@ -85,9 +85,9 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
         return [...prev, { name: filename, path: `${selectedBatchPath}/Historical/${filename}` }];
       });
     } else {
-      // timeValue comes as "HH:MM" — pad to "HH:MM:00"
-      const time = timeValue.length === 5 ? `${timeValue}:00` : timeValue;
-      setHistoricalDates(prev => ({ ...prev, [filename]: `${dateValue}T${time}` }));
+      // Store as "YYYY-MM-DDTHH:MM AM/PM" — no seconds, 12-hour format
+      const time12 = `${timeValue} ${ampm}`;
+      setHistoricalDates(prev => ({ ...prev, [filename]: `${dateValue}T${time12}` }));
       setMissingDateQueue(prev => prev.filter(item => item.name !== filename));
     }
   }, [selectedBatchPath]);

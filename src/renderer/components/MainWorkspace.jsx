@@ -495,13 +495,22 @@ function JsonCreationView({
     setSelectedImage(img);
     const existing = historicalDates[img.name];
     setEditingDate(existing ? existing.slice(0, 10) : '');
-    if (existing && existing.length > 10) {
-      const [hStr, mStr] = existing.slice(11, 16).split(':');
-      let h = parseInt(hStr, 10) || 0;
-      const ampm = h >= 12 ? 'PM' : 'AM';
-      h = h % 12 || 12;
-      setEditingTime(`${String(h).padStart(2, '0')}:${mStr || '00'}`);
-      setEditingAmPm(ampm);
+    if (existing && existing.includes('T')) {
+      const timePart = existing.slice(11); // e.g. "08:00 PM" or "20:00:00"
+      if (timePart.includes('AM') || timePart.includes('PM')) {
+        // Already 12-hour format
+        const [t, ap] = timePart.split(' ');
+        setEditingTime(t);
+        setEditingAmPm(ap);
+      } else {
+        // Legacy 24-hour — convert for display
+        const [hStr, mStr] = timePart.split(':');
+        let h = parseInt(hStr, 10) || 0;
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        h = h % 12 || 12;
+        setEditingTime(`${String(h).padStart(2, '0')}:${mStr || '00'}`);
+        setEditingAmPm(ampm);
+      }
     } else {
       setEditingTime('12:00');
       setEditingAmPm('AM');
@@ -521,13 +530,8 @@ function JsonCreationView({
 
   const handleConfirmDate = () => {
     if (!editingDate || !selectedImage) return;
-    // Convert 12-hour to 24-hour for storage
-    const [hStr, mStr] = editingTime.split(':');
-    let h = parseInt(hStr, 10) || 0;
-    if (editingAmPm === 'AM' && h === 12) h = 0;
-    if (editingAmPm === 'PM' && h !== 12) h += 12;
-    const time24 = `${String(h).padStart(2, '0')}:${mStr || '00'}`;
-    onUpdateDate(selectedImage.name, editingDate, time24);
+    // Pass time as-is in 12-hour format with AM/PM
+    onUpdateDate(selectedImage.name, editingDate, editingTime, editingAmPm);
     const missingNames = missingDateQueue.map(m => m.name).filter(n => n !== selectedImage.name);
     const nextMissing = allHistoricalImages.find(img => missingNames.includes(img.name));
     if (nextMissing) {
@@ -636,7 +640,7 @@ function JsonCreationView({
                     </div>
                     {hasMeta && (
                       <div className="grid-cell-date mono">
-                        {historicalDates[img.name].slice(0, 16).replace('T', ' ')}
+                        {historicalDates[img.name].replace('T', ' ')}
                       </div>
                     )}
                   </div>

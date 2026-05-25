@@ -387,9 +387,22 @@ ipcMain.handle('exif:writeImageMetadata', async (_, { batchFolderPath, metadata,
     if (img.subfolder === 'Historical') {
       const captureDate = historicalDates[img.name];
       if (captureDate) {
-        const exifDate = captureDate
-          .replace(/^(\d{4})-(\d{2})-(\d{2})/, '$1:$2:$3')
-          .replace('T', ' ');
+        // captureDate: "YYYY-MM-DDTHH:MM AM/PM" or legacy "YYYY-MM-DDTHH:MM:SS"
+        const [datePart, timePart] = captureDate.split('T');
+        const exifDatePart = datePart.replace(/-/g, ':');
+        // Convert 12-hour to 24-hour for EXIF standard format
+        let exifTime;
+        if (timePart && (timePart.includes('AM') || timePart.includes('PM'))) {
+          const [t, ap] = timePart.trim().split(' ');
+          const [hStr, mStr] = t.split(':');
+          let h = parseInt(hStr, 10) || 0;
+          if (ap === 'AM' && h === 12) h = 0;
+          if (ap === 'PM' && h !== 12) h += 12;
+          exifTime = `${String(h).padStart(2, '0')}:${mStr || '00'}:00`;
+        } else {
+          exifTime = timePart ? timePart.slice(0, 5) + ':00' : '00:00:00';
+        }
+        const exifDate = `${exifDatePart} ${exifTime}`;
         args.push(`-DateTimeOriginal=${exifDate}`);
         args.push(`-CreateDate=${exifDate}`);
       }
