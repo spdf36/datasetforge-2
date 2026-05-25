@@ -871,7 +871,7 @@ function CompleteView({ outputPath, writeStatus }) {
           <div className="write-status">
             <div className="write-status-row">
               <span className="ws-badge" style={{ background: 'var(--accent-green-dim)', color: 'var(--accent-green)', border: '1px solid rgba(0,229,160,0.3)' }}>
-                ✓ {writeStatus.written} images tagged
+                ✓ {writeStatus.written} Historical images tagged
               </span>
               {writeStatus.failed?.length > 0 && (
                 <span className="ws-badge badge-warn">

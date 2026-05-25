@@ -103,9 +103,15 @@ function extractDateWithExiftool(filePath) {
         const data = JSON.parse(stdout);
         const raw = data[0]?.DateTimeOriginal || data[0]?.CreateDate;
         if (!raw) { resolve(null); return; }
-        const match = raw.match(/^(\d{4}):(\d{2}):(\d{2})/);
-        if (match) resolve(`${match[1]}-${match[2]}-${match[3]}T00:00:00`);
-        else resolve(null);
+        // ExifTool format: "2023:07:14 15:30:00"
+        const match = raw.match(/^(\d{4}):(\d{2}):(\d{2})\s+(\d{2}):(\d{2})/);
+        if (!match) { resolve(null); return; }
+        const [, yr, mo, dy, hStr, mStr] = match;
+        let h = parseInt(hStr, 10);
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        h = h % 12 || 12;
+        const time12 = `${String(h).padStart(2, '0')}:${mStr} ${ampm}`;
+        resolve(`${yr}-${mo}-${dy}T${time12}`);
       } catch { resolve(null); }
     });
   });
@@ -237,9 +243,17 @@ ipcMain.handle('exif:extractHistoricalDates', async (_, historicalFolderPath) =>
         for (const img of images) {
           const raw = resultMap[img.name];
           if (raw) {
-            const match = raw.match(/^(\d{4}):(\d{2}):(\d{2})/);
-            if (match) dates[img.name] = `${match[1]}-${match[2]}-${match[3]}T00:00:00`;
-            else missingQueue.push({ name: img.name, path: img.path });
+            const match = raw.match(/^(\d{4}):(\d{2}):(\d{2})\s+(\d{2}):(\d{2})/);
+            if (match) {
+              const [, yr, mo, dy, hStr, mStr] = match;
+              let h = parseInt(hStr, 10);
+              const ampm = h >= 12 ? 'PM' : 'AM';
+              h = h % 12 || 12;
+              const time12 = `${String(h).padStart(2, '0')}:${mStr} ${ampm}`;
+              dates[img.name] = `${yr}-${mo}-${dy}T${time12}`;
+            } else {
+              missingQueue.push({ name: img.name, path: img.path });
+            }
           } else {
             missingQueue.push({ name: img.name, path: img.path });
           }
@@ -262,7 +276,7 @@ ipcMain.handle('exif:removeDate', async (_, filePath) => {
       '-DateTime=', '-Date=',
       '-XMP:DateTimeOriginal=', '-XMP:CreateDate=', '-XMP:ModifyDate=', '-XMP:MetadataDate=',
       '-IPTC:DateCreated=', '-IPTC:TimeCreated=', '-IPTC:DigitalCreationDate=', '-IPTC:DigitalCreationTime=',
-      '-overwrite_original_in_place', '-m', filePath,
+      '-overwrite_original_in_place', '-m', '-no_thumbs', filePath,
     ];
     execFile(exifBin, args, { timeout: 15000 }, (err, stdout, stderr) => {
       if (err) resolve({ success: false, error: stderr || err.message });
@@ -332,7 +346,7 @@ ipcMain.handle('exif:writeCameraMetadata', async (_, { filePath, cameraFields })
 
     if (args.length === 0) { resolve({ success: true }); return; }
 
-    args.push('-overwrite_original_in_place', '-m', filePath);
+    args.push('-overwrite_original_in_place', '-m', '-no_thumbs', filePath);
     execFile(exifBin, args, { timeout: 15000 }, (err, stdout, stderr) => {
       if (err) resolve({ success: false, error: stderr || err.message });
       else resolve({ success: true });
@@ -340,30 +354,21 @@ ipcMain.handle('exif:writeCameraMetadata', async (_, { filePath, cameraFields })
   });
 });
 
-// Write metadata fields into ALL images in Historical, Present_Neutral, and Pose_Variation folders
+// Write metadata fields into Historical folder images only
 ipcMain.handle('exif:writeImageMetadata', async (_, { batchFolderPath, metadata, historicalDates }) => {
   const exifBin = getExifToolPath();
   const results = { success: [], failed: [] };
 
-  // Collect all images across the three subfolders
-  const subfolders = ['Historical', 'Present_Neutral'];
-  const poseVariants = ['Pose_Variation_A', 'Pose_Variation_B'];
-  for (const pv of poseVariants) {
-    const pvPath = path.join(batchFolderPath, pv);
-    if (fs.existsSync(pvPath)) { subfolders.push(pv); break; }
+  // Only process the Historical subfolder
+  const historicalPath = path.join(batchFolderPath, 'Historical');
+  if (!fs.existsSync(historicalPath)) {
+    return { success: true, written: 0, failed: [] };
   }
 
-  const allImages = [];
-  for (const subfolder of subfolders) {
-    const folderPath = path.join(batchFolderPath, subfolder);
-    if (!fs.existsSync(folderPath)) continue;
-    const entries = fs.readdirSync(folderPath, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isFile() && isImage(entry.name)) {
-        allImages.push({ name: entry.name, path: path.join(folderPath, entry.name), subfolder });
-      }
-    }
-  }
+  const entries = fs.readdirSync(historicalPath, { withFileTypes: true });
+  const allImages = entries
+    .filter(e => e.isFile() && isImage(e.name))
+    .map(e => ({ name: e.name, path: path.join(historicalPath, e.name), subfolder: 'Historical' }));
 
   // Build arg list for a single image
   const buildArgs = (img) => {
@@ -387,24 +392,31 @@ ipcMain.handle('exif:writeImageMetadata', async (_, { batchFolderPath, metadata,
     if (img.subfolder === 'Historical') {
       const captureDate = historicalDates[img.name];
       if (captureDate) {
-        // captureDate: "YYYY-MM-DDTHH:MM AM/PM" or legacy "YYYY-MM-DDTHH:MM:SS"
         const [datePart, timePart] = captureDate.split('T');
         const exifDatePart = datePart.replace(/-/g, ':');
-        // Convert 12-hour to 24-hour for EXIF standard format
-        let exifTime;
+
+        // Convert 12-hour to 24-hour for standard EXIF (required by spec)
+        let h24, mStr;
         if (timePart && (timePart.includes('AM') || timePart.includes('PM'))) {
           const [t, ap] = timePart.trim().split(' ');
-          const [hStr, mStr] = t.split(':');
+          const [hStr, m] = t.split(':');
+          mStr = m || '00';
           let h = parseInt(hStr, 10) || 0;
           if (ap === 'AM' && h === 12) h = 0;
           if (ap === 'PM' && h !== 12) h += 12;
-          exifTime = `${String(h).padStart(2, '0')}:${mStr || '00'}:00`;
+          h24 = String(h).padStart(2, '0');
         } else {
-          exifTime = timePart ? timePart.slice(0, 5) + ':00' : '00:00:00';
+          const parts = (timePart || '00:00').slice(0, 5).split(':');
+          h24 = parts[0] || '00';
+          mStr = parts[1] || '00';
         }
-        const exifDate = `${exifDatePart} ${exifTime}`;
-        args.push(`-DateTimeOriginal=${exifDate}`);
-        args.push(`-CreateDate=${exifDate}`);
+
+        const exifDate24 = `${exifDatePart} ${h24}:${mStr}:00`;
+        // Standard EXIF tag (24-hour — required for compatibility)
+        args.push(`-DateTimeOriginal=${exifDate24}`);
+        args.push(`-CreateDate=${exifDate24}`);
+        // XMP tag stores the 12-hour string so viewers that read XMP show it as entered
+        if (timePart) args.push(`-XMP:DateTimeOriginal=${datePart}T${timePart.trim()}`);
       }
     }
     return args;
@@ -413,7 +425,10 @@ ipcMain.handle('exif:writeImageMetadata', async (_, { batchFolderPath, metadata,
   const writeOne = (img) => new Promise((resolve) => {
     const args = buildArgs(img);
     if (args.length === 0) { resolve(); return; }
-    args.push('-overwrite_original_in_place', '-m', img.path);
+    // -overwrite_original_in_place: no backup files
+    // -m: ignore minor errors (extension mismatches etc.)
+    // -no_thumbs: don't generate or modify embedded thumbnails
+    args.push('-overwrite_original_in_place', '-m', '-no_thumbs', img.path);
     execFile(exifBin, args, { timeout: 15000 }, (err, stdout, stderr) => {
       if (err) results.failed.push({ name: img.name, error: stderr || err.message });
       else results.success.push(img.name);
