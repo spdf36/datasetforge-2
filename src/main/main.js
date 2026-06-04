@@ -345,8 +345,6 @@ ipcMain.handle('exif:writeCameraMetadata', async (_, { filePath, cameraFields })
     if (cameraFields.flash)        args.push(`-Flash=${cameraFields.flash}`);
 
     if (args.length === 0) { resolve({ success: true }); return; }
-
-    args.push('-overwrite_original_in_place', '-m', '-no_thumbs', filePath);
     execFile(exifBin, args, { timeout: 15000 }, (err, stdout, stderr) => {
       if (err) resolve({ success: false, error: stderr || err.message });
       else resolve({ success: true });
@@ -388,7 +386,6 @@ ipcMain.handle('exif:writeImageMetadata', async (_, { batchFolderPath, metadata,
       metadata.device_os     ? `DeviceOS:${metadata.device_os}` : '',
     ].filter(Boolean).join(' | ');
     if (desc) args.push(`-XMP:Description=${desc}`);
-    args.push('-Software=DatasetForge');
     if (img.subfolder === 'Historical') {
       const captureDate = historicalDates[img.name];
       if (captureDate) {
@@ -493,4 +490,43 @@ ipcMain.handle('fs:saveMetadata', async (_, { batchFolderPath, filename, metadat
 
 ipcMain.handle('shell:showItemInFolder', async (_, filePath) => {
   shell.showItemInFolder(filePath);
+});
+// --- Metadata Verifier IPC Handler (Python-based) -----------------------
+
+ipcMain.handle('verify:runScript', async (event, { rootPath }) => {
+  const { findPython, runVerifyScript } = require('./verify_runner');
+  return runVerifyScript(rootPath, (data) => {
+    if (!event.sender.isDestroyed()) {
+      event.sender.send('verify:data', data);
+    }
+  });
+});
+
+ipcMain.handle('verify:sendInput', async (event, { input }) => {
+  const { sendInput } = require('./verify_runner');
+  sendInput(input);
+});
+
+ipcMain.handle('verify:cancel', async () => {
+  const { cancelScript } = require('./verify_runner');
+  cancelScript();
+});
+
+// ─── Image Tools IPC Handlers ───────────────────────────────────────────────
+const { convertAllToJpg, resizeImages } = require('./image_tools_handlers');
+
+ipcMain.handle('tools:convertToJpg', async (event, { folderPath }) => {
+  return convertAllToJpg(folderPath, (progress) => {
+    if (!event.sender.isDestroyed()) {
+      event.sender.send('tools:progress', progress);
+    }
+  });
+});
+
+ipcMain.handle('tools:resizeImages', async (event, { folderPath }) => {
+  return resizeImages(folderPath, (progress) => {
+    if (!event.sender.isDestroyed()) {
+      event.sender.send('tools:progress', progress);
+    }
+  });
 });

@@ -26,7 +26,6 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
   const [isProcessing, setIsProcessing]       = useState(false);
   const [outputPath, setOutputPath]           = useState(null);
   const [poseVariantFound, setPoseVariantFound]   = useState(null);
-  const [writeStatus, setWriteStatus]         = useState(null);
   const [copiedCameraFields, setCopiedCameraFields] = useState(null);
   const [copyFeedback, setCopyFeedback]       = useState(false);
 
@@ -43,7 +42,6 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
     setMode(WORKSPACE_MODE.IMAGE_LIST);
     setValidationResult(null);
     setOutputPath(null);
-    setWriteStatus(null);
 
     const result = await window.electron.validateBatchFolder(node.path);
     setValidationResult(result);
@@ -99,20 +97,16 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
 
   const saveMetadata = async (dates) => {
     setIsProcessing(true);
-    setWriteStatus(null);
     try {
-      // 1. Write metadata into every image file via ExifTool
-      const writeResult = await window.electron.writeImageMetadata({
-        batchFolderPath: selectedBatchPath,
-        metadata,
-        historicalDates: dates,
-      });
-      setWriteStatus(writeResult);
-
-      // 2. Sort dates and save JSON
+      // Sort dates and strip time — store only YYYY-MM-DDT00:00:00
       const sortedDates = Object.keys(dates)
         .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
-        .reduce((acc, key) => { acc[key] = dates[key]; return acc; }, {});
+        .reduce((acc, key) => {
+          // Keep only the date part, always use T00:00:00
+          const datePart = dates[key].slice(0, 10);
+          acc[key] = `${datePart}T00:00:00`;
+          return acc;
+        }, {});
 
       const finalMetadata = {
         ...metadata,
@@ -174,7 +168,6 @@ export default function WorkspaceLayout({ rootPath, fileTree, allImages, onRefre
           onRenameFolder={handleRenameFolder}
           isProcessing={isProcessing}
           outputPath={outputPath}
-          writeStatus={writeStatus}
           copiedCameraFields={copiedCameraFields}
           setCopiedCameraFields={setCopiedCameraFields}
           copyFeedback={copyFeedback}

@@ -1,0 +1,194 @@
+/* src/renderer/components/ModeSelect.css */
+
+.mode-select-root {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-void);
+}
+
+.mode-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.mode-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 70% 60% at 50% 50%, rgba(0,212,255,0.03) 0%, transparent 70%);
+}
+
+/* ── Header ────────────────────────────────────────────────────── */
+.mode-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 1;
+}
+
+.mode-logo {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.mode-tagline {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.05em;
+}
+
+/* ── Cards ─────────────────────────────────────────────────────── */
+.mode-cards {
+  display: flex;
+  gap: 20px;
+  z-index: 1;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 1120px;
+}
+
+.mode-card {
+  width: 320px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  cursor: pointer;
+  transition: all var(--transition-med);
+  text-align: left;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+
+.mode-card::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: calc(var(--radius-lg) + 1px);
+  opacity: 0;
+  transition: opacity var(--transition-med);
+  pointer-events: none;
+}
+
+.mode-card-cyan::before {
+  background: linear-gradient(135deg, rgba(0,212,255,0.15), transparent 60%);
+}
+
+.mode-card-amber::before {
+  background: linear-gradient(135deg, rgba(255,176,32,0.15), transparent 60%);
+}
+
+.mode-card-green::before {
+  background: linear-gradient(135deg, rgba(0,229,160,0.15), transparent 60%);
+}
+
+.mode-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 28px 80px rgba(0,0,0,0.5);
+}
+
+.mode-card:hover::before { opacity: 1; }
+
+.mode-card-cyan:hover  { border-color: rgba(0,212,255,0.4); }
+.mode-card-amber:hover { border-color: rgba(255,176,32,0.4); }
+.mode-card-green:hover { border-color: rgba(0,229,160,0.4); }
+
+/* ── Card Icon ─────────────────────────────────────────────────── */
+.mode-card-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-med);
+}
+
+.mode-card-cyan .mode-card-icon {
+  background: var(--accent-cyan-dim);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0,212,255,0.2);
+}
+
+.mode-card-amber .mode-card-icon {
+  background: var(--accent-amber-dim);
+  color: var(--accent-amber);
+  border: 1px solid rgba(255,176,32,0.2);
+}
+
+.mode-card-green .mode-card-icon {
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
+  border: 1px solid rgba(0,229,160,0.2);
+}
+
+.mode-card:hover .mode-card-icon {
+  transform: scale(1.05);
+}
+
+/* ── Card Body ─────────────────────────────────────────────────── */
+.mode-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.mode-card-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.mode-card-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* ── Card Action ───────────────────────────────────────────────── */
+.mode-card-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.mode-card-shortcut {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  transition: all var(--transition-fast);
+}
+
+.mode-card-cyan .mode-card-shortcut  { color: var(--accent-cyan); }
+.mode-card-amber .mode-card-shortcut { color: var(--accent-amber); }
+.mode-card-green .mode-card-shortcut { color: var(--accent-green); }
+
+.mode-card:hover .mode-card-shortcut {
+  letter-spacing: 0.1em;
+}
+
+/* ── Footer ────────────────────────────────────────────────────── */
+.mode-footer {
+  position: absolute;
+  bottom: 20px;
+  font-size: 11px;
+  color: var(--text-muted);
+  z-index: 1;
+}

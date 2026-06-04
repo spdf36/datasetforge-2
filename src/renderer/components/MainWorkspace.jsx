@@ -8,7 +8,7 @@ export default function MainWorkspace({
   validationResult, referenceImageSrc,
   historicalDates, missingDateQueue,
   onUpdateDate, onStartJsonCreation, onSaveDirectly,
-  onRenameFolder, isProcessing, outputPath, writeStatus,
+  onRenameFolder, isProcessing, outputPath,
   copiedCameraFields, setCopiedCameraFields, copyFeedback, setCopyFeedback,
   onRefresh,
 }) {
@@ -48,7 +48,7 @@ export default function MainWorkspace({
         />
       )}
       {mode === WORKSPACE_MODE.COMPLETE && (
-        <CompleteView outputPath={outputPath} writeStatus={writeStatus} />
+        <CompleteView outputPath={outputPath} />
       )}
     </div>
   );
@@ -859,38 +859,13 @@ function CameraField({ label, value, onChange, placeholder }) {
 }
 
 // ── Complete View ────────────────────────────────────────────────
-function CompleteView({ outputPath, writeStatus }) {
+function CompleteView({ outputPath }) {
   return (
     <div className="ws-view ws-complete">
       <div className="complete-inner">
         <div className="complete-icon">✓</div>
-        <h2>Done</h2>
+        <h2>metadata.json saved</h2>
         <p className="complete-path mono" title={outputPath}>{outputPath}</p>
-
-        {writeStatus && (
-          <div className="write-status">
-            <div className="write-status-row">
-              <span className="ws-badge" style={{ background: 'var(--accent-green-dim)', color: 'var(--accent-green)', border: '1px solid rgba(0,229,160,0.3)' }}>
-                ✓ {writeStatus.written} Historical images tagged
-              </span>
-              {writeStatus.failed?.length > 0 && (
-                <span className="ws-badge badge-warn">
-                  ⚠ {writeStatus.failed.length} failed
-                </span>
-              )}
-            </div>
-            {writeStatus.failed?.length > 0 && (
-              <div className="write-failed-list">
-                {writeStatus.failed.map(f => (
-                  <div key={f.name} className="write-failed-item mono">
-                    {f.name}: {f.error}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
         <button
           className="btn btn-secondary"
           onClick={() => window.electron.showItemInFolder(outputPath)}
