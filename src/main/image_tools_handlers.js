@@ -88,22 +88,89 @@ async function installDeps(pythonCmd, packages, progressCallback) {
 }
 
 // ── Run a script, stream output ──────────────────────────────────────────────
-function runScript(pythonCmd, scriptPath, folderPath, progressCallback) {
+
+
+// ── Constants ────────────────────────────────────────────────────────────────
+const IMAGE_EXTS_SET  = new Set(['.jpg','.jpeg','.png','.heic','.heif','.webp','.bmp','.tiff','.tif','.mpo']);
+const RESIZE_EXTS_SET = new Set(['.jpg','.jpeg','.png','.webp','.bmp','.tiff','.tif']);
+
+// ── Get ordered list of batch folders to process ─────────────────────────────
+function getBatchFolders(rootPath, extSet) {
+  // Returns [{name, fullPath, fileCount}]
+  // If the root itself has matching images, treat root as the single batch.
+  let entries;
+  try { entries = fs.readdirSync(rootPath, { withFileTypes: true }); } catch { return []; }
+
+  function countFiles(dir) {
+    let n = 0;
+    let ents;
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return 0; }
+    for (const e of ents) {
+      if (e.isDirectory()) n += countFiles(path.join(dir, e.name));
+      else if (e.isFile() && extSet.has(path.extname(e.name).toLowerCase())
+               && e.name.toLowerCase() !== 'metadata.json') n++;
+    }
+    return n;
+  }
+
+  // Check if root itself contains images directly (single-batch drop)
+  const rootImageCount = entries.filter(e =>
+    e.isFile() && extSet.has(path.extname(e.name).toLowerCase())
+    && e.name.toLowerCase() !== 'metadata.json'
+  ).length;
+
+  if (rootImageCount > 0) {
+    // Root has images — treat root as single batch
+    return [{ name: path.basename(rootPath), fullPath: rootPath, fileCount: rootImageCount }];
+  }
+
+  // Root has subdirectories — each top-level dir is a batch folder
+  const dirs = entries
+    .filter(e => e.isDirectory())
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+  const result = [];
+  for (const dir of dirs) {
+    const fullPath = path.join(rootPath, dir.name);
+    const fileCount = countFiles(fullPath);
+    if (fileCount > 0) result.push({ name: dir.name, fullPath, fileCount });
+  }
+  return result;
+}
+
+// ── Parse summary numbers from script output lines ───────────────────────────
+function extractSummaryNumbers(msg) {
+  // Step 1 (all_to_jpg): Converted, Renamed, Skipped, Failed
+  let m;
+  m = msg.match(/Converted to JPG\s*:\s*(\d+)/i); if (m) return { key: 'converted', val: parseInt(m[1]) };
+  m = msg.match(/Renamed to \.jpg\s*:\s*(\d+)/i);  if (m) return { key: 'renamed',   val: parseInt(m[1]) };
+  // Step 2 (resize): Total, Modified, Skipped, Errors
+  m = msg.match(/Total Images Checked\s*:\s*(\d+)/i);  if (m) return { key: 'checked',   val: parseInt(m[1]) };
+  m = msg.match(/Images Modified\s*:\s*(\d+)/i);       if (m) return { key: 'modified',  val: parseInt(m[1]) };
+  m = msg.match(/Images Skipped[^:]*:\s*(\d+)/i);      if (m) return { key: 'skipped',   val: parseInt(m[1]) };
+  m = msg.match(/Errors Encountered\s*:\s*(\d+)/i);    if (m) return { key: 'errors',    val: parseInt(m[1]) };
+  m = msg.match(/Skipped \(As-Is\)\s*:\s*(\d+)/i);     if (m) return { key: 'skipped',   val: parseInt(m[1]) };
+  m = msg.match(/Failed\s*:\s*(\d+)/i);                if (m) return { key: 'errors',    val: parseInt(m[1]) };
+  return null;
+}
+
+// ── Run script on a single folder, stream output, return stats ────────────────
+function runScriptOnFolder(pythonCmd, scriptPath, folderPath, progressCallback) {
   return new Promise((resolve) => {
+    const stats = { converted: 0, renamed: 0, checked: 0, modified: 0, skipped: 0, errors: 0 };
+
     const proc = spawn(pythonCmd, ['-u', scriptPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
     });
 
-    // Send folder path via stdin
     proc.stdin.write(folderPath + '\n');
     proc.stdin.end();
 
     let lineBuffer = '';
 
     const handleChunk = (chunk) => {
-      // Strip ANSI escape codes
       const clean = chunk.toString('utf-8').replace(/\x1b\[[0-9;]*m/g, '');
       lineBuffer += clean;
       const lines = lineBuffer.split(/\r?\n/);
@@ -111,7 +178,13 @@ function runScript(pythonCmd, scriptPath, folderPath, progressCallback) {
       for (const line of lines) {
         if (!line.trim()) continue;
         const parsed = parseLine(line);
-        if (parsed) progressCallback({ type: 'line', ...parsed });
+        if (!parsed) continue;
+        // Accumulate summary numbers silently — don't show per-folder summary lines
+        const num = extractSummaryNumbers(parsed.msg);
+        if (num) { stats[num.key] = (stats[num.key] || 0) + num.val; }
+        // Hide the per-folder summary block (===, Total, Images lines) — shown in final summary instead
+        if (parsed.action === 'summary') continue;
+        progressCallback({ type: 'line', ...parsed });
       }
     };
 
@@ -121,19 +194,70 @@ function runScript(pythonCmd, scriptPath, folderPath, progressCallback) {
     proc.on('close', (code) => {
       if (lineBuffer.trim()) {
         const parsed = parseLine(lineBuffer);
-        if (parsed) progressCallback({ type: 'line', ...parsed });
+        if (parsed && parsed.action !== 'summary') progressCallback({ type: 'line', ...parsed });
       }
-      resolve({ exitCode: code });
+      resolve({ exitCode: code, stats });
     });
 
     proc.on('error', (err) => {
-      progressCallback({ type: 'line', action: 'error', msg: `[ERROR] ${err.message}` });
-      resolve({ exitCode: -1, error: err.message });
+      progressCallback({ type: 'line', action: 'error', msg: '[ERROR] ' + err.message });
+      resolve({ exitCode: -1, error: err.message, stats });
     });
   });
 }
 
-// ── Parse output line ────────────────────────────────────────────────────────
+// ── Run script folder-by-folder, emit final summary ──────────────────────────
+async function runOnAllFolders(pythonCmd, scriptPath, rootPath, extSet, progressCallback) {
+  const batches = getBatchFolders(rootPath, extSet);
+
+  if (batches.length === 0) {
+    progressCallback({ type: 'line', action: 'warn', msg: 'No image files found in: ' + rootPath });
+    return { exitCode: 0 };
+  }
+
+  let anyFailed = false;
+  const totals = { converted: 0, renamed: 0, checked: 0, modified: 0, skipped: 0, errors: 0 };
+
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+    progressCallback({
+      type: 'line', action: 'folder',
+      msg: batch.name + '  (' + batch.fileCount + ' file' + (batch.fileCount !== 1 ? 's' : '') + ')  [' + (i + 1) + '/' + batches.length + ']'
+    });
+
+    const result = await runScriptOnFolder(pythonCmd, scriptPath, batch.fullPath, progressCallback);
+    if (result.exitCode !== 0) anyFailed = true;
+
+    // Accumulate stats
+    for (const key of Object.keys(totals)) {
+      totals[key] += (result.stats?.[key] || 0);
+    }
+  }
+
+  // ── Final summary ──
+  const div = '='.repeat(40);
+  progressCallback({ type: 'line', action: 'final_summary', msg: div });
+  progressCallback({ type: 'line', action: 'final_summary', msg: 'FINAL SUMMARY  (' + batches.length + ' folder' + (batches.length !== 1 ? 's' : '') + ')' });
+  progressCallback({ type: 'line', action: 'final_summary', msg: div });
+
+  if (totals.checked > 0) {
+    // resize_image.py style
+    progressCallback({ type: 'line', action: 'final_summary', msg: 'Total Checked   : ' + totals.checked });
+    progressCallback({ type: 'line', action: 'final_summary', msg: 'Modified        : ' + totals.modified });
+    progressCallback({ type: 'line', action: 'final_summary', msg: 'Skipped (Valid) : ' + totals.skipped });
+    progressCallback({ type: 'line', action: 'final_summary', msg: 'Errors          : ' + totals.errors });
+  } else {
+    // all_to_jpg style
+    progressCallback({ type: 'line', action: 'final_summary', msg: 'Converted to JPG: ' + totals.converted });
+    progressCallback({ type: 'line', action: 'final_summary', msg: 'Renamed to .jpg : ' + totals.renamed });
+    progressCallback({ type: 'line', action: 'final_summary', msg: 'Skipped (As-Is) : ' + totals.skipped });
+    progressCallback({ type: 'line', action: 'final_summary', msg: 'Errors          : ' + totals.errors });
+  }
+  progressCallback({ type: 'line', action: 'final_summary', msg: div });
+
+  return { exitCode: anyFailed ? 1 : 0 };
+}
+
 function parseLine(line) {
   const l = line.trim();
   if (!l) return null;
@@ -164,33 +288,23 @@ async function setupPython(deps, progressCallback) {
         '',
         'To fix: run setup_python.ps1 (in the scripts/ folder) as Administrator.',
         'It will download a self-contained Python with all required packages.',
-        'No installation required — it bundles directly into the app.',
       ].join('\n'),
     };
   }
 
-  progressCallback({ type: 'line', action: 'info', msg: `Found Python: ${python}` });
+  progressCallback({ type: 'line', action: 'info', msg: 'Found Python: ' + python });
 
   const missing = await checkDeps(python, deps);
   if (missing.length > 0) {
     const pkgMap = { PIL: 'Pillow', piexif: 'piexif', pillow_heif: 'pillow-heif' };
     const pkgs = missing.map(m => pkgMap[m] || m);
-    progressCallback({ type: 'line', action: 'warn', msg: `Missing packages: ${pkgs.join(', ')} — installing automatically...` });
+    progressCallback({ type: 'line', action: 'warn', msg: 'Missing packages: ' + pkgs.join(', ') + ' - installing automatically...' });
 
     const ok = await installDeps(python, pkgs, progressCallback);
     if (!ok) {
-      return {
-        error: [
-          `Failed to auto-install: ${pkgs.join(' ')}`,
-          '',
-          'Please run manually in a terminal:',
-          `  pip install ${pkgs.join(' ')}`,
-          '',
-          'Or run scripts/setup_python.ps1 to set up the bundled Python.',
-        ].join('\n'),
-      };
+      return { error: 'Failed to auto-install: ' + pkgs.join(' ') + '\n\nRun manually:\n  pip install ' + pkgs.join(' ') };
     }
-    progressCallback({ type: 'line', action: 'summary', msg: `[OK] Packages installed successfully.` });
+    progressCallback({ type: 'line', action: 'summary', msg: '[OK] Packages installed successfully.' });
   }
 
   return { python };
@@ -204,10 +318,10 @@ async function convertAllToJpg(folderPath, progressCallback) {
   const scriptPath = getScriptPath('all_to_jpg_final.py');
   if (!scriptPath) return { error: 'Script not found: all_to_jpg_final.py' };
 
-  progressCallback({ type: 'line', action: 'info', msg: `Folder: ${folderPath}` });
+  progressCallback({ type: 'line', action: 'info', msg: 'Root: ' + folderPath });
   progressCallback({ type: 'line', action: 'info', msg: '-'.repeat(50) });
 
-  const result = await runScript(setup.python, scriptPath, folderPath, progressCallback);
+  const result = await runOnAllFolders(setup.python, scriptPath, folderPath, IMAGE_EXTS_SET, progressCallback);
   progressCallback({ type: 'done', exitCode: result.exitCode });
   return { success: result.exitCode === 0, exitCode: result.exitCode };
 }
@@ -219,10 +333,10 @@ async function resizeImages(folderPath, progressCallback) {
   const scriptPath = getScriptPath('resize_image.py');
   if (!scriptPath) return { error: 'Script not found: resize_image.py' };
 
-  progressCallback({ type: 'line', action: 'info', msg: `Folder: ${folderPath}` });
+  progressCallback({ type: 'line', action: 'info', msg: 'Root: ' + folderPath });
   progressCallback({ type: 'line', action: 'info', msg: '-'.repeat(50) });
 
-  const result = await runScript(setup.python, scriptPath, folderPath, progressCallback);
+  const result = await runOnAllFolders(setup.python, scriptPath, folderPath, RESIZE_EXTS_SET, progressCallback);
   progressCallback({ type: 'done', exitCode: result.exitCode });
   return { success: result.exitCode === 0, exitCode: result.exitCode };
 }

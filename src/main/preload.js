@@ -25,15 +25,13 @@ contextBridge.exposeInMainWorld('electron', {
   writeImageMetadata:     (args)       => ipcRenderer.invoke('exif:writeImageMetadata', args),
 
   // Image Tools (Python-based)
-  convertToJpg:      (args) => ipcRenderer.invoke('tools:convertToJpg', args),
-  resizeImages:      (args) => ipcRenderer.invoke('tools:resizeImages', args),
-  onToolsProgress:   (cb)   => ipcRenderer.on('tools:progress', (_, data) => cb(data)),
-  offToolsProgress:  ()     => ipcRenderer.removeAllListeners('tools:progress'),
+  convertToJpg:     (args) => ipcRenderer.invoke('tools:convertToJpg', args),
+  resizeImages:     (args) => ipcRenderer.invoke('tools:resizeImages', args),
+  onToolsProgress:  (cb)   => ipcRenderer.on('tools:progress', (_, data) => cb(data)),
+  offToolsProgress: ()     => ipcRenderer.removeAllListeners('tools:progress'),
 
-  // Metadata Verifier (Python-based)
-  runVerifyScript:    (args)  => ipcRenderer.invoke('verify:runScript', args),
-  sendVerifyInput:    (args)  => ipcRenderer.invoke('verify:sendInput', args),
-  cancelVerify:       ()      => ipcRenderer.invoke('verify:cancel'),
-  onVerifyData:       (cb)    => ipcRenderer.on('verify:data', (_, data) => cb(data)),
-  offVerifyData:      ()      => ipcRenderer.removeAllListeners('verify:data'),
+  // Metadata Verifier (Node.js)
+  findSubjects:   (rootPath) => ipcRenderer.invoke('verify:findSubjects', rootPath),
+  analyseSubject: (args)     => ipcRenderer.invoke('verify:analyseSubject', args),
+  applyFixes:     (args)     => ipcRenderer.invoke('verify:applyFixes', args),
 });

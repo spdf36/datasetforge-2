@@ -30,6 +30,10 @@ export default function ImageToolsWorkspace({ onBack }) {
   useEffect(() => {
     window.electron.onToolsProgress((data) => {
       if (data.type === 'line') {
+        if (data.action === 'folder') {
+          setLog(prev => [...prev, { text: data.msg, color: 'folder' }]);
+          return;
+        }
         const color =
           data.action === 'error'   ? 'red'    :
           data.action === 'warn'    ? 'amber'  :
@@ -38,7 +42,8 @@ export default function ImageToolsWorkspace({ onBack }) {
           data.action === 'convert' ? 'amber'  :
           data.action === 'resize'  ? 'amber'  :
           data.action === 'done'    ? 'green'  :
-          data.action === 'summary' ? 'green'  :
+          data.action === 'summary'       ? 'green'         :
+          data.action === 'final_summary' ? 'final_summary' :
           'default';
         setLog(prev => [...prev, { text: data.msg, color }]);
       } else if (data.type === 'done') {
@@ -248,8 +253,15 @@ export default function ImageToolsWorkspace({ onBack }) {
               <div className="it-log-empty">Output will appear here when processing starts.</div>
             )}
             {log.map((line, i) => (
-              <div key={i} className={`it-log-line it-log-${line.color}`}>
-                {line.text || '\u00a0'}
+              <div key={i} className={`it-log-line ${
+                line.color === 'folder'        ? 'it-log-folder' :
+                line.color === 'final_summary' ? 'it-log-final-summary' :
+                'it-log-' + line.color}`}>
+                {line.color === 'folder' ? (
+                  <span>📁 {line.text}</span>
+                ) : (
+                  line.text || '\u00a0'
+                )}
               </div>
             ))}
             <div ref={logEndRef} />

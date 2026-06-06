@@ -401,3 +401,28 @@
 .it-log-red    { color: var(--accent-red); }
 .it-log-muted  { color: var(--text-muted); }
 .it-log-default { color: var(--text-secondary); }
+
+/* ── Folder separator in log ───────────────────────────────────── */
+.it-log-folder {
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  margin-top: 12px;
+  margin-bottom: 2px;
+  padding: 5px 8px;
+  background: rgba(0,212,255,0.06);
+  border: 1px solid rgba(0,212,255,0.15);
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+}
+.it-log-folder:first-child {
+  margin-top: 0;
+}
+
+/* ── Final summary block ───────────────────────────────────────── */
+.it-log-final-summary {
+  color: var(--accent-green);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}

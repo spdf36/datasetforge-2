@@ -491,25 +491,104 @@ ipcMain.handle('fs:saveMetadata', async (_, { batchFolderPath, filename, metadat
 ipcMain.handle('shell:showItemInFolder', async (_, filePath) => {
   shell.showItemInFolder(filePath);
 });
-// --- Metadata Verifier IPC Handler (Python-based) -----------------------
+// --- Metadata Verifier IPC Handlers (Node.js) ---------------------------
 
-ipcMain.handle('verify:runScript', async (event, { rootPath }) => {
-  const { findPython, runVerifyScript } = require('./verify_runner');
-  return runVerifyScript(rootPath, (data) => {
-    if (!event.sender.isDestroyed()) {
-      event.sender.send('verify:data', data);
+ipcMain.handle('verify:findSubjects', async (_, rootPath) => {
+  if (!fs.existsSync(rootPath)) return { error: 'Path does not exist' };
+  const results = [];
+  function walk(dir) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const subDir = path.join(dir, entry.name);
+      const metaPath = path.join(subDir, 'metadata.json');
+      const histPath = path.join(subDir, 'Historical');
+      if (fs.existsSync(metaPath) && fs.existsSync(histPath)) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+          if (meta.historic_capture_dates) results.push({ subjectName: entry.name, subjectPath: subDir, metaPath, histPath });
+        } catch { }
+      }
+      walk(subDir);
     }
-  });
+  }
+  const rootMeta = path.join(rootPath, 'metadata.json');
+  const rootHist = path.join(rootPath, 'Historical');
+  if (fs.existsSync(rootMeta) && fs.existsSync(rootHist)) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(rootMeta, 'utf-8'));
+      if (meta.historic_capture_dates) results.push({ subjectName: path.basename(rootPath), subjectPath: rootPath, metaPath: rootMeta, histPath: rootHist });
+    } catch { }
+  }
+  walk(rootPath);
+  return { subjects: results };
 });
 
-ipcMain.handle('verify:sendInput', async (event, { input }) => {
-  const { sendInput } = require('./verify_runner');
-  sendInput(input);
+ipcMain.handle('verify:analyseSubject', async (_, { subjectPath, metaPath, histPath }) => {
+  const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+  const captureDates = { ...meta.historic_capture_dates };
+  const IMAGE_EXTS = new Set(['.jpg','.jpeg','.png','.webp','.bmp','.tiff','.tif','.heic','.heif']);
+  const diskImages = {};
+  try {
+    fs.readdirSync(histPath, { withFileTypes: true }).forEach(e => {
+      if (e.isFile() && IMAGE_EXTS.has(path.extname(e.name).toLowerCase()))
+        diskImages[e.name] = path.join(histPath, e.name);
+    });
+  } catch { }
+  const exifBin = getExifToolPath();
+  const diskFiles = Object.values(diskImages);
+  const exifMap = {};
+  if (diskFiles.length > 0) {
+    await new Promise(resolve => {
+      execFile(exifBin, ['-DateTimeOriginal', '-CreateDate', '-FileName', '-json', ...diskFiles],
+        { timeout: 30000, maxBuffer: 20 * 1024 * 1024 },
+        (err, stdout) => {
+          if (!err && stdout) {
+            try {
+              JSON.parse(stdout).forEach(r => {
+                const raw = r.DateTimeOriginal || r.CreateDate;
+                if (raw) { const m = raw.match(/^(\d{4}):(\d{2}):(\d{2})/); if (m) exifMap[r.FileName] = m[1]+'-'+m[2]+'-'+m[3]; }
+              });
+            } catch { }
+          }
+          resolve();
+        });
+    });
+  }
+  const timeIssues = [], stale = [], unlisted = [], dateMismatch = [], noExif = [], clean = [];
+  for (const [filename, dateValue] of Object.entries(captureDates)) {
+    const afterT = dateValue.includes('T') ? dateValue.slice(11) : '';
+    const hasNonZeroTime = afterT && afterT !== '00:00:00';
+    if (!diskImages[filename]) { stale.push({ filename, dateValue }); continue; }
+    const exifDate = exifMap[filename] || null;
+    if (!exifDate) { if (hasNonZeroTime) timeIssues.push({ filename, dateValue }); else noExif.push({ filename, dateValue }); continue; }
+    const dateDiffers = dateValue.slice(0, 10) !== exifDate;
+    if (dateDiffers) dateMismatch.push({ filename, dateValue, exifDate });
+    else if (hasNonZeroTime) timeIssues.push({ filename, dateValue });
+    else clean.push(filename);
+  }
+  for (const filename of Object.keys(diskImages)) {
+    if (!captureDates[filename]) unlisted.push({ filename, exifDate: exifMap[filename] || null });
+  }
+  const totalDisk = Object.keys(diskImages).length;
+  const exifCount = totalDisk - noExif.length - unlisted.length;
+  const exifPct = totalDisk > 0 ? (exifCount / totalDisk * 100) : 0;
+  return { subjectName: path.basename(subjectPath), metaPath, histPath, totalDisk, totalJson: Object.keys(captureDates).length, allDates: captureDates, timeIssues, stale, unlisted, dateMismatch, noExif, clean, exifCount, exifPct, exifOk: exifPct >= 25 };
 });
 
-ipcMain.handle('verify:cancel', async () => {
-  const { cancelScript } = require('./verify_runner');
-  cancelScript();
+ipcMain.handle('verify:applyFixes', async (_, { metaPath, fixes }) => {
+  try {
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    const dates = { ...meta.historic_capture_dates };
+    (fixes.remove || []).forEach(f => { delete dates[f]; });
+    Object.entries(fixes.add || {}).forEach(([f, d]) => { dates[f] = d; });
+    Object.entries(fixes.update || {}).forEach(([f, d]) => { dates[f] = d; });
+    const sorted = Object.keys(dates).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })).reduce((acc, k) => { acc[k] = dates[k]; return acc; }, {});
+    meta.historic_capture_dates = sorted;
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+    return { success: true };
+  } catch (err) { return { success: false, error: err.message }; }
 });
 
 // ─── Image Tools IPC Handlers ───────────────────────────────────────────────
